@@ -21,7 +21,6 @@ RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi 
 COPY shared ./shared
 COPY client ./client
 COPY src ./src
-COPY scripts ./scripts
 
 RUN npm --prefix client run build
 
