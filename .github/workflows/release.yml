@@ -45,8 +45,11 @@ jobs:
         with:
           name: windows
           path: |
-            dist/electron/*
-            dist/portable/*
+            dist/electron/*.exe
+            dist/electron/*.blockmap
+            dist/electron/latest.yml
+            dist/portable/*.zip
+          if-no-files-found: error
 
   build-macos:
     strategy:
@@ -85,8 +88,12 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            dist/electron/*
-            dist/portable/*
+            dist/electron/*.dmg
+            dist/electron/*.zip
+            dist/electron/*.blockmap
+            dist/electron/latest-mac.yml
+            dist/portable/*.tar.gz
+          if-no-files-found: error
 
   build-linux:
     runs-on: ubuntu-latest
@@ -121,8 +128,11 @@ jobs:
         with:
           name: linux
           path: |
-            dist/electron/*
-            dist/portable/*
+            dist/electron/*.AppImage
+            dist/electron/*.deb
+            dist/electron/latest-linux.yml
+            dist/portable/*.tar.gz
+          if-no-files-found: error
 
   create-release:
     needs: [build-windows, build-macos, build-linux]
@@ -148,14 +158,36 @@ jobs:
             echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Collect release assets
+        id: assets
+        run: |
+          shopt -s nullglob globstar
+          mapfile -t files < <(find artifacts -type f \( \
+            -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o \
+            -name '*.AppImage' -o -name '*.deb' -o -name '*.tar.gz' -o \
+            -name '*.blockmap' -o -name 'latest*.yml' \
+          \) | sort)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No release assets found under artifacts/" >&2
+            find artifacts -maxdepth 3 -type f | head -50 >&2 || true
+            exit 1
+          fi
+          printf '%s\n' "${files[@]}"
+          {
+            echo "files<<EOF"
+            printf '%s\n' "${files[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Noe-SSH v${{ steps.meta.outputs.version }}
           body_path: .github/release-notes/v${{ steps.meta.outputs.version }}.md
-          files: artifacts/**
+          files: ${{ steps.assets.outputs.files }}
           draft: false
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
