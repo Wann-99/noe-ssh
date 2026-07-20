@@ -1,0 +1,12 @@
+node_modules/
+docs/
+.idea/
+.claude/
+.DS_Store
+.env
+.venv*/
+**/__pycache__/
+*.tar
+*.tar.gz
+build/
+dist/

@@ -1,0 +1,205 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAppStore } from './store/appStore';
+import { hasVault } from './lib/crypto';
+import { Header } from './components/Header';
+import { SessionTabs } from './components/SessionTabs';
+import { Sidebar } from './components/Sidebar';
+import { TerminalView } from './components/TerminalView';
+import { FilePanel } from './components/FilePanel';
+import { AccessGate } from './components/AccessGate';
+import { VaultGate } from './components/VaultGate';
+import { PreviewModal } from './components/PreviewModal';
+import { BgModal } from './components/BgModal';
+import { ShortcutsModal } from './components/ShortcutsModal';
+import { Splitter } from './components/Splitter';
+
+const SIDEBAR_MIN = 220;
+const SIDEBAR_MAX = 480;
+const SIDEBAR_DEFAULT = 300;
+const FILE_MIN = 260;
+const FILE_MAX = 560;
+const FILE_DEFAULT = 360;
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function loadWidth(key: string, fallback: number, min: number, max: number) {
+  const raw = parseInt(localStorage.getItem(key) || '', 10);
+  if (!Number.isFinite(raw)) return fallback;
+  return clamp(raw, min, max);
+}
+
+export default function App() {
+  const init = useAppStore((s) => s.init);
+  const authenticated = useAppStore((s) => s.authenticated);
+  const authRequired = useAppStore((s) => s.authRequired);
+  const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
+  const bgUrl = useAppStore((s) => s.bgUrl);
+  const bgOpacity = useAppStore((s) => s.bgOpacity);
+  const filePanelOpen = useAppStore((s) => s.filePanelOpen);
+  const connectActive = useAppStore((s) => s.connectActive);
+  const disconnectActive = useAppStore((s) => s.disconnectActive);
+  const [bgOpen, setBgOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [vaultGate, setVaultGate] = useState<'unlock' | 'setup' | null>(hasVault() ? 'unlock' : null);
+  const [sidebarW, setSidebarW] = useState(() =>
+    loadWidth('ssh_sidebar_w', SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX));
+  const [filePanelW, setFilePanelW] = useState(() =>
+    loadWidth('ssh_file_panel_w', FILE_DEFAULT, FILE_MIN, FILE_MAX));
+  const sidebarWRef = useRef(sidebarW);
+  const filePanelWRef = useRef(filePanelW);
+  sidebarWRef.current = sidebarW;
+  filePanelWRef.current = filePanelW;
+
+  const onSidebarDrag = useCallback((delta: number) => {
+    setSidebarW((prev) => clamp(prev + delta, SIDEBAR_MIN, SIDEBAR_MAX));
+  }, []);
+
+  const onFilePanelDrag = useCallback((delta: number) => {
+    setFilePanelW((prev) => clamp(prev + delta, FILE_MIN, FILE_MAX));
+  }, []);
+
+  const persistSidebar = useCallback(() => {
+    localStorage.setItem('ssh_sidebar_w', String(sidebarWRef.current));
+  }, []);
+
+  const persistFilePanel = useCallback(() => {
+    localStorage.setItem('ssh_file_panel_w', String(filePanelWRef.current));
+  }, []);
+
+  useEffect(() => {
+    init();
+    if (hasVault()) setVaultGate('unlock');
+  }, [init]);
+
+  useEffect(() => {
+    window.dispatchEvent(new Event('resize'));
+    window.dispatchEvent(new CustomEvent('ssh-layout-resize'));
+  }, [filePanelOpen, sidebarW, filePanelW]);
+
+  useEffect(() => {
+    if (hasVault() && !vaultUnlocked) setVaultGate('unlock');
+  }, [vaultUnlocked]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        connectActive();
+      }
+      if (e.ctrlKey && e.key === 'd') {
+        e.preventDefault();
+        disconnectActive();
+      }
+      if (e.key === 'Escape') {
+        setBgOpen(false);
+        setShortcutsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [connectActive, disconnectActive]);
+
+  if (authRequired && !authenticated) {
+    return <AccessGate />;
+  }
+
+  if (vaultGate === 'unlock' && !vaultUnlocked) {
+    return (
+      <VaultGate
+        mode="unlock"
+        onDone={() => setVaultGate(null)}
+        onCancel={() => setVaultGate(null)}
+      />
+    );
+  }
+
+  if (vaultGate === 'setup') {
+    return (
+      <VaultGate
+        mode="setup"
+        onDone={() => setVaultGate(null)}
+        onCancel={() => setVaultGate(null)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`app-shell${bgUrl ? ' has-bg' : ''}`}
+      style={
+        bgUrl
+          ? {
+              backgroundImage: `linear-gradient(rgba(8,12,16,${1 - bgOpacity / 100}), rgba(8,12,16,${1 - bgOpacity / 100})), url(${bgUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundAttachment: 'fixed',
+            }
+          : undefined
+      }
+    >
+      <Header
+        onOpenBg={() => setBgOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onSetupVault={() => setVaultGate('setup')}
+      />
+      <SessionTabs />
+      <div className="workspace">
+        <aside className="sidebar-shell" style={{ width: sidebarW }}>
+          <Sidebar />
+        </aside>
+        <Splitter
+          orientation="vertical"
+          onDrag={onSidebarDrag}
+          onDragEnd={persistSidebar}
+        />
+        <div className="main-stage">
+          <div className="terminal-pane">
+            <TerminalView />
+          </div>
+          {filePanelOpen && (
+            <>
+              <Splitter
+                orientation="vertical"
+                reverse
+                onDrag={onFilePanelDrag}
+                onDragEnd={persistFilePanel}
+              />
+              <div className="file-pane" style={{ width: filePanelW }}>
+                <FilePanel />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <PreviewModal />
+      {bgOpen && <BgModal onClose={() => setBgOpen(false)} />}
+      {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
+      {!hasVault() && (
+        <VaultBanner onSetup={() => setVaultGate('setup')} />
+      )}
+    </div>
+  );
+}
+
+function VaultBanner({ onSetup }: { onSetup: () => void }) {
+  const [hide, setHide] = useState(localStorage.getItem('ssh_vault_banner_hide') === '1');
+  if (hide) return null;
+  return (
+    <div className="vault-banner">
+      <span>建议设置主密码，加密保存的连接凭据</span>
+      <button type="button" className="btn btn-primary btn-sm" onClick={onSetup}>设置</button>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        onClick={() => {
+          localStorage.setItem('ssh_vault_banner_hide', '1');
+          setHide(true);
+        }}
+      >
+        稍后
+      </button>
+    </div>
+  );
+}
