@@ -49,7 +49,7 @@ export function ConnectForm() {
               className="input host-combo-input"
               value={form.host}
               onChange={(e) => setForm({ host: e.target.value })}
-              placeholder="192.168.1.100"
+              placeholder=""
               autoComplete="off"
             />
             <button
@@ -94,7 +94,7 @@ export function ConnectForm() {
       </div>
       <label className="field">
         <span>用户名</span>
-        <input className="input" value={form.username} onChange={(e) => setForm({ username: e.target.value })} placeholder="root" />
+        <input className="input" value={form.username} onChange={(e) => setForm({ username: e.target.value })} placeholder="" />
       </label>
 
       {form.authMode === 'password' ? (
