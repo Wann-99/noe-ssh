@@ -1,0 +1,16 @@
+# Noe-SSH 用户部署（无需源码）
+# 用法：
+#   1. cp .env.example .env
+#   2. 编辑 .env，只改 NOE_SSH_ACCESS_TOKEN
+#   3. docker compose up -d
+services:
+  noe-ssh:
+    image: ghcr.io/wann-99/noe-ssh:latest
+    container_name: noe-ssh
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - NOE_SSH_ACCESS_TOKEN=${NOE_SSH_ACCESS_TOKEN:?请在 .env 中设置 NOE_SSH_ACCESS_TOKEN}
+    restart: unless-stopped

@@ -77,19 +77,38 @@ npm run electron:dev
 
 ## Docker（推荐自托管）
 
+### 给最终用户（无需源码，只设口令）
+
+见 [`deploy/`](deploy/)：拉取已发布镜像，**只改** `NOE_SSH_ACCESS_TOKEN`，其余默认。
+
+```bash
+mkdir noe-ssh && cd noe-ssh
+curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/.env.example -o .env
+# 编辑 .env，填写 NOE_SSH_ACCESS_TOKEN
+docker compose up -d
+```
+
+访问 http://localhost:3000 ，用口令登录。
+
+### 开发者本地构建
+
 ```bash
 cp .env.example .env
 # 务必修改 NOE_SSH_ACCESS_TOKEN
 docker compose up -d --build
 ```
 
-访问 http://localhost:3000 ，使用 `.env` 中的口令登录。
-
 未设置 `NOE_SSH_ACCESS_TOKEN` 时服务仍可启动，但**不建议**将端口暴露到公网。
 
-### 镜像发布
+### 镜像发布（维护者）
 
-见仓库内 `docker-publish.sh` 与 `.github/workflows/docker-publish.yml`。
+```bash
+# 需先 docker login ghcr.io
+./docker-publish.sh ghcr.io/wann-99/noe-ssh
+```
+
+也可用 `.github/workflows/docker-publish.yml` 打 tag 自动推送。
 
 ## 桌面 / 便携版
 
