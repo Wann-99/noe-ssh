@@ -21,10 +21,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix client ci --no-fund --no-audit
 
       - name: Prepare build assets
+        shell: bash
         run: |
+          npm --prefix client run build
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
           node scripts/prepare-node-runtime.mjs
@@ -57,10 +62,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix client ci --no-fund --no-audit
 
       - name: Prepare build assets
         run: |
+          npm --prefix client run build
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
           node scripts/prepare-node-runtime.mjs
@@ -91,10 +99,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix client ci --no-fund --no-audit
 
       - name: Prepare build assets
         run: |
+          npm --prefix client run build
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
           node scripts/prepare-node-runtime.mjs

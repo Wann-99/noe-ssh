@@ -10,7 +10,7 @@
     "dev": "node src/index.js",
     "dev:client": "npm --prefix client run dev",
     "build:client": "npm --prefix client run build",
-    "postinstall": "npm --prefix client install",
+    "postinstall": "node scripts/install-client.mjs",
     "prepare:vendor": "node scripts/prepare-vendor.mjs",
     "prepare:app": "node scripts/prepare-app-bundle.mjs",
     "prepare:node": "node scripts/prepare-node-runtime.mjs",

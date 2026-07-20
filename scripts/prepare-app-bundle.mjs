@@ -26,7 +26,12 @@ function copyRecursive(src, dest) {
 export function prepareAppBundle() {
   if (!fs.existsSync(path.join(root, 'dist', 'client', 'index.html'))) {
     console.log('Building client...');
-    execSync('npm --prefix client run build', { cwd: root, stdio: 'inherit' });
+    const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    execSync(`${npmBin} --prefix client run build`, {
+      cwd: root,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
   }
 
   if (fs.existsSync(outDir)) {
