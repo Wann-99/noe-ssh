@@ -35,6 +35,7 @@
   "build": {
     "appId": "com.wann99.noessh",
     "productName": "Noe-SSH",
+    "npmRebuild": false,
     "directories": {
       "output": "dist/electron",
       "buildResources": "electron/icons"

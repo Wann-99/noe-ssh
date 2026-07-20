@@ -59,7 +59,13 @@ export function prepareAppBundle() {
   fs.writeFileSync(bundlePkgPath, `${JSON.stringify(bundlePkg, null, 2)}\n`);
 
   console.log('Installing production dependencies...');
-  execSync('npm ci --omit=dev', { cwd: outDir, stdio: 'inherit' });
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  // Native modules (ssh2/cpu-features) target the bundled Node runtime, not Electron.
+  execSync(`${npmBin} ci --omit=dev`, {
+    cwd: outDir,
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  });
 
   console.log(`App bundle ready: ${outDir}`);
   return outDir;
