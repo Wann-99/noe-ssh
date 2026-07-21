@@ -2,6 +2,7 @@ const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const { setupAutoUpdater, checkForUpdatesManual } = require('./updater');
 
 const PORT = process.env.PORT || 3000;
 const HOST = '127.0.0.1';
@@ -129,7 +130,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     title: 'Noe-SSH',
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -145,6 +146,59 @@ function createWindow() {
       mainWindow.hide();
     }
   });
+}
+
+function buildAppMenu() {
+  const template = [
+    ...(process.platform === 'darwin'
+      ? [{
+          label: app.name,
+          submenu: [
+            { role: 'about' },
+            { type: 'separator' },
+            {
+              label: '检查更新…',
+              click: () => { checkForUpdatesManual(); },
+            },
+            { type: 'separator' },
+            { role: 'quit' },
+          ],
+        }]
+      : []),
+    {
+      label: '文件',
+      submenu: [
+        {
+          label: '显示窗口',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.show();
+              mainWindow.focus();
+            }
+          },
+        },
+        { type: 'separator' },
+        process.platform === 'darwin' ? { role: 'close' } : { role: 'quit', label: '退出' },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '检查更新…',
+          click: () => { checkForUpdatesManual(); },
+        },
+        {
+          label: '打开发布页',
+          click: async () => {
+            const { shell } = require('electron');
+            await shell.openExternal('https://github.com/Wann-99/noe-ssh/releases');
+          },
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function createTray() {
@@ -163,6 +217,11 @@ function createTray() {
         }
       },
     },
+    {
+      label: '检查更新…',
+      click: () => { checkForUpdatesManual(); },
+    },
+    { type: 'separator' },
     {
       label: '退出',
       click: () => {
@@ -185,8 +244,12 @@ app.whenReady().then(async () => {
   try {
     startServer();
     await waitForServer();
+    buildAppMenu();
     createWindow();
     createTray();
+    setupAutoUpdater({
+      setQuitting: () => { isQuitting = true; },
+    });
   } catch (err) {
     console.error(err);
     app.quit();

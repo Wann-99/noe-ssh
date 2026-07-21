@@ -160,7 +160,7 @@ Package 需保持 **Public**，否则匿名用户拉不下来。
 
 打同一 tag 时会同时跑 **Release Desktop Packages**；也可在 Actions 里对 `main` 手动 **Run workflow**。
 
-成功后到 https://github.com/Wann-99/noe-ssh/releases 下载：
+成功后到 https://github.com/Wann-99/noe-ssh/releases 下载（**不要保持 draft**，否则客户端自动更新发现不了）：
 
 | 平台 | 典型文件 |
 |------|----------|
@@ -202,6 +202,20 @@ docker compose up -d
 ## 桌面 / 便携版
 
 从 [Releases](https://github.com/Wann-99/noe-ssh/releases) 下载安装包，或见上一节本地构建命令。
+
+### 自动更新
+
+打包后的桌面应用会在启动约 8 秒后静默检查 GitHub Releases；也可在菜单 **帮助 → 检查更新…** 或托盘菜单手动检查。
+
+| 形态 | 自动更新 |
+|------|----------|
+| **Linux AppImage** | 推荐，支持下载后重启安装 |
+| Linux `.deb` / 便携 tar | 仅提示，建议改用 AppImage 或手动下新包 |
+| Windows Setup | 可更新，未签名可能被 SmartScreen 拦截 |
+| macOS | 可更新，未签名/未公证可能被系统拦截 |
+| 便携 zip | 不适合原地覆盖，请手动下载 |
+
+维护者发版时请确保 Release **已发布（非 draft）**，并包含对应平台的 `latest*.yml` 与安装包，自动更新才能发现新版本。
 
 ## 使用说明（摘要）
 
