@@ -101,24 +101,107 @@ docker compose up -d --build
 
 未设置 `NOE_SSH_ACCESS_TOKEN` 时服务仍可启动，但**不建议**将端口暴露到公网。
 
-### 镜像发布（维护者）
+## 版本升级与发布（维护者）
+
+每次发新版本按下面做即可。约定：镜像仓库 `ghcr.io/wann-99/noe-ssh`，版本号改 `package.json` / `client/package.json`。
+
+### 1. 改代码并自测
 
 ```bash
-# 需先 docker login ghcr.io
-./docker-publish.sh ghcr.io/wann-99/noe-ssh
+# 前端有改动时
+npm run build:client
+
+# 可选：冒烟
+npm run test:smoke
+
+# 本地 Docker 验证（从源码构建）
+docker compose up -d --build
 ```
 
-也可用 `.github/workflows/docker-publish.yml` 打 tag 自动推送。
+提交并推送到 `main`：
 
-## 桌面 / 便携版
+```bash
+git add -A
+git commit -m "描述本次改动"
+git push origin main
+```
 
-从 Releases 下载安装包，或本地构建：
+### 2.  bump 版本并写发布说明
+
+1. 修改根目录与 `client/package.json` 的 `"version"`（例如 `1.3.0` → `1.3.1`）  
+2. 新增 `.github/release-notes/v1.3.1.md`（桌面 Release 正文会读这个文件）  
+3. 提交版本号与 release notes  
+
+### 3. 发布 Docker 镜像（给用户 `docker pull`）
+
+**方式 A：打 tag，Actions 自动推 GHCR（推荐）**
+
+```bash
+git tag v1.3.1
+git push origin v1.3.1
+```
+
+触发工作流：**Publish Docker Image**，产物：
+
+- `ghcr.io/wann-99/noe-ssh:1.3.1`
+- `ghcr.io/wann-99/noe-ssh:latest`
+
+**方式 B：本机脚本推送**
+
+```bash
+echo <GITHUB_TOKEN> | docker login ghcr.io -u Wann-99 --password-stdin
+./docker-publish.sh ghcr.io/wann-99/noe-ssh
+# 可用 VERSION=1.3.1 指定标签；国内可改推阿里云等 registry
+```
+
+Package 需保持 **Public**，否则匿名用户拉不下来。
+
+### 4. 发布桌面安装包（Releases）
+
+打同一 tag 时会同时跑 **Release Desktop Packages**；也可在 Actions 里对 `main` 手动 **Run workflow**。
+
+成功后到 https://github.com/Wann-99/noe-ssh/releases 下载：
+
+| 平台 | 典型文件 |
+|------|----------|
+| Windows | `Noe-SSH-*-Setup.exe` / Portable |
+| macOS | `.dmg` / `.zip` |
+| Linux | `.AppImage` / `.deb` / 便携 `.tar.gz` |
+
+本地手动打包（可选）：
 
 ```bash
 npm run prepare:build
 npm run electron:build
 npm run package:portable
+# 产物在 dist/electron/ 、 dist/portable/
 ```
+
+### 5. 用户侧如何升级（无需源码）
+
+**Docker 用户**（`deploy/` 方式）：
+
+```bash
+cd noe-ssh   # 放 docker-compose.yml 与 .env 的目录
+docker compose pull
+docker compose up -d
+# .env 里的 NOE_SSH_ACCESS_TOKEN 一般不用改
+```
+
+**桌面用户**：到 Releases 下载新安装包覆盖安装 / 解压运行即可。
+
+### 发布检查清单
+
+- [ ] `main` 已推送，本地/冒烟通过  
+- [ ] 版本号与 `release-notes/vX.Y.Z.md` 已更新  
+- [ ] tag `vX.Y.Z` 已推送（或已手动跑两个 workflow）  
+- [ ] Actions：**Publish Docker Image** 成功  
+- [ ] Actions：**Release Desktop Packages** 成功，Release 资源为安装包而非拆包目录  
+- [ ] `docker pull ghcr.io/wann-99/noe-ssh:latest` 在目标网络可成功  
+
+## 桌面 / 便携版
+
+从 [Releases](https://github.com/Wann-99/noe-ssh/releases) 下载安装包，或见上一节本地构建命令。
 
 ## 使用说明（摘要）
 
