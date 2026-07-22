@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Image, Keyboard, LockKeyhole, LogOut, Shield, ShieldCheck } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { hasVault } from '../lib/crypto';
 
@@ -15,11 +16,15 @@ export function Header({
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const lockVault = useAppStore((s) => s.lockVault);
   const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
+  const user = useAppStore((s) => s.user);
+  const authRequired = useAppStore((s) => s.authRequired);
+  const logout = useAppStore((s) => s.logout);
+  const setShowAdmin = useAppStore((s) => s.setShowAdmin);
   const sess = sessions.find((s) => s.id === activeSessionId);
   const [elapsed, setElapsed] = useState('');
 
   useEffect(() => {
-    if (!sess?.connected || !sess.startedAt) {
+    if (sess?.status !== 'ready' || !sess.startedAt) {
       setElapsed('');
       return;
     }
@@ -37,7 +42,17 @@ export function Header({
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [sess?.connected, sess?.startedAt]);
+  }, [sess?.status, sess?.startedAt]);
+
+  const statusLabel = sess?.status === 'connecting'
+    ? '连接中'
+    : sess?.status === 'disconnecting'
+      ? '断开中'
+      : sess?.status === 'ready'
+        ? '已连接'
+        : sess?.status === 'error'
+          ? '连接异常'
+          : '未连接';
 
   return (
     <header className="header">
@@ -45,33 +60,53 @@ export function Header({
         <span className="brand-mark" />
         <h1>Noe-SSH</h1>
       </div>
-      <div className={`status-dot ${sess?.connected ? 'on' : ''} ${sess?.connecting ? 'pending' : ''}`} />
-      <span className="status-text">
-        {sess?.connecting ? '连接中…' : sess?.connected ? '已连接' : '未连接'}
-      </span>
-      {(sess?.connected || sess?.connecting) && sess?.host && (
+      <div className={`connection-pill status-${sess?.status || 'idle'}`} title={sess?.error || statusLabel}>
+        <span className="status-dot" />
+        <span>{statusLabel}</span>
+      </div>
+      {sess?.status === 'ready' && (
+        <div className={`sftp-pill sftp-${sess.sftpStatus}`}>
+          SFTP {sess.sftpStatus === 'ready' ? '就绪' : sess.sftpStatus === 'connecting' ? '连接中' : '不可用'}
+        </div>
+      )}
+      {['ready', 'connecting', 'disconnecting'].includes(sess?.status || '') && sess?.host && (
         <span className="conn-meta">
           {sess.username}@{sess.host}:{sess.port}
           {elapsed && <span className="timer">{elapsed}</span>}
         </span>
       )}
       <div className="header-actions">
+        {user && (
+          <span className="header-user" title={user.role === 'admin' ? '管理员' : '用户'}>
+            {user.username}
+          </span>
+        )}
+        {user?.role === 'admin' && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdmin(true)}>
+            <Shield size={14} />管理后台
+          </button>
+        )}
         {hasVault() && vaultUnlocked && (
           <button type="button" className="btn btn-ghost btn-sm" onClick={lockVault} title="锁定保险库">
-            锁定
+            <LockKeyhole size={14} />锁定
           </button>
         )}
         {!hasVault() && (
           <button type="button" className="btn btn-ghost btn-sm" onClick={onSetupVault}>
-            保险库
+            <ShieldCheck size={14} />保险库
           </button>
         )}
         <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenShortcuts}>
-          快捷键
+          <Keyboard size={14} />快捷键
         </button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBg}>
-          背景
+          <Image size={14} />背景
         </button>
+        {authRequired && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => logout()}>
+            <LogOut size={14} />退出
+          </button>
+        )}
       </div>
     </header>
   );

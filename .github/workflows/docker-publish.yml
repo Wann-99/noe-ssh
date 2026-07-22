@@ -62,5 +62,5 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           build-args: |
-            NODE_IMAGE=node:20-alpine
+            NODE_IMAGE=node:22-bookworm-slim
             USE_CN_MIRROR=0

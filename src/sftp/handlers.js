@@ -1,4 +1,5 @@
 const { PREVIEW_MAX_BYTES } = require('../../shared/protocol');
+const { TRANSFER_CHUNK_SIZE } = require('../../shared/wsBinary');
 
 function formatMode(mode) {
   const types = ['p', 'c', 'd', 'b', '-', 'l', 's'];
@@ -147,6 +148,7 @@ function previewFile(sftp, remotePath) {
         resolve({
           path: remotePath,
           size: stats.size,
+          mtime: stats.mtime * 1000,
           binary,
           content: binary ? null : text,
         });
@@ -155,22 +157,108 @@ function previewFile(sftp, remotePath) {
   });
 }
 
-function writeFile(sftp, remotePath, content) {
+function stat(sftp, remotePath) {
   return new Promise((resolve, reject) => {
-    const buf = Buffer.from(content, 'utf-8');
-    if (buf.length > PREVIEW_MAX_BYTES) {
-      reject(new Error(`内容过大 (${buf.length} bytes)，上限 ${PREVIEW_MAX_BYTES} bytes`));
-      return;
-    }
-    sftp.writeFile(remotePath, buf, (err) => {
+    sftp.stat(remotePath, (err, attrs) => {
       if (err) reject(err);
-      else resolve({ path: remotePath, size: buf.length });
+      else resolve(attrs);
     });
   });
 }
 
+function writeRaw(sftp, remotePath, buf) {
+  return new Promise((resolve, reject) => {
+    sftp.writeFile(remotePath, buf, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function unlinkQuietly(sftp, remotePath) {
+  return new Promise((resolve) => {
+    sftp.unlink(remotePath, () => resolve());
+  });
+}
+
+function replaceFile(sftp, from, to, destinationExists) {
+  if (typeof sftp.ext_openssh_rename === 'function') {
+    return new Promise((resolve, reject) => {
+      sftp.ext_openssh_rename(from, to, (err) => (err ? reject(err) : resolve()));
+    });
+  }
+  return rename(sftp, from, to).catch(async (err) => {
+    if (!destinationExists) throw err;
+    await unlinkQuietly(sftp, to);
+    await rename(sftp, from, to);
+  });
+}
+
+/**
+ * Save through a sibling temporary file so a failed upload never truncates the
+ * original. expectedMtime protects an editor tab from overwriting a file that
+ * changed remotely after it was opened.
+ */
+async function writeFile(sftp, remotePath, content, expectedMtime, createOnly = false) {
+  const buf = Buffer.from(content, 'utf-8');
+  if (buf.length > PREVIEW_MAX_BYTES) {
+    throw new Error(`内容过大 (${buf.length} bytes)，上限 ${PREVIEW_MAX_BYTES} bytes`);
+  }
+
+  let previous = null;
+  try {
+    previous = await stat(sftp, remotePath);
+  } catch (err) {
+    if (!/No such file|ENOENT/i.test(err.message || String(err))) throw err;
+  }
+
+  if (createOnly && previous) {
+    const exists = new Error('同名文件已存在');
+    exists.code = 'FILE_EXISTS';
+    throw exists;
+  }
+
+  if (
+    expectedMtime !== undefined
+    && expectedMtime !== null
+    && previous
+    && Math.abs((previous.mtime * 1000) - Number(expectedMtime)) >= 1000
+  ) {
+    const conflict = new Error('远程文件已被其他程序修改，请重新打开后再保存');
+    conflict.code = 'FILE_CONFLICT';
+    throw conflict;
+  }
+
+  const slash = remotePath.lastIndexOf('/');
+  const dir = slash >= 0 ? remotePath.slice(0, slash + 1) : '';
+  const name = slash >= 0 ? remotePath.slice(slash + 1) : remotePath;
+  const tempPath = `${dir}.${name}.noe-${process.pid}-${Date.now()}.tmp`;
+
+  try {
+    await writeRaw(sftp, tempPath, buf);
+    if (previous && typeof sftp.chmod === 'function') {
+      await new Promise((resolve, reject) => {
+        sftp.chmod(tempPath, previous.mode & 0o777, (err) => (err ? reject(err) : resolve()));
+      });
+    }
+    await replaceFile(sftp, tempPath, remotePath, Boolean(previous));
+  } catch (err) {
+    await unlinkQuietly(sftp, tempPath);
+    throw err;
+  }
+
+  const attrs = await stat(sftp, remotePath);
+  return {
+    path: remotePath,
+    size: buf.length,
+    mtime: attrs.mtime * 1000,
+  };
+}
+
 function createUploadStream(sftp, remoteFile) {
-  const writeStream = sftp.createWriteStream(remoteFile);
+  const writeStream = sftp.createWriteStream(remoteFile, {
+    highWaterMark: TRANSFER_CHUNK_SIZE,
+  });
   return writeStream;
 }
 
@@ -181,7 +269,9 @@ function createDownloadStream(sftp, remotePath) {
         reject(err);
         return;
       }
-      const readStream = sftp.createReadStream(remotePath);
+      const readStream = sftp.createReadStream(remotePath, {
+        highWaterMark: TRANSFER_CHUNK_SIZE,
+      });
       resolve({ readStream, size: stats.size, filename: remotePath.split('/').pop() });
     });
   });

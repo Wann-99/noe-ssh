@@ -1,7 +1,8 @@
 # Noe-SSH 用户部署（无需源码）
 # 用法：
 #   1. cp .env.example .env
-#   2. 编辑 .env，只改 NOE_SSH_ACCESS_TOKEN
+#   2. 编辑 .env：设置 NOE_SSH_ADMIN_PASSWORD（推荐账号模式）
+#      或仅设置 NOE_SSH_ACCESS_TOKEN（遗留单口令）
 #   3. docker compose up -d
 services:
   noe-ssh:
@@ -12,5 +13,10 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
-      - NOE_SSH_ACCESS_TOKEN=${NOE_SSH_ACCESS_TOKEN:?请在 .env 中设置 NOE_SSH_ACCESS_TOKEN}
+      - NOE_SSH_DATA_DIR=/data
+      - NOE_SSH_ADMIN_USER=${NOE_SSH_ADMIN_USER:-admin}
+      - NOE_SSH_ADMIN_PASSWORD=${NOE_SSH_ADMIN_PASSWORD:?请在 .env 中设置 NOE_SSH_ADMIN_PASSWORD}
+      - NOE_SSH_ACCESS_TOKEN=${NOE_SSH_ACCESS_TOKEN:-}
+    volumes:
+      - ./data:/data
     restart: unless-stopped

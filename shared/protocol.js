@@ -20,6 +20,7 @@ const MSG = {
   SFTP_UPLOAD_START: 'sftp-upload-start',
   SFTP_UPLOAD_CHUNK: 'sftp-upload-chunk',
   SFTP_UPLOAD_END: 'sftp-upload-end',
+  SFTP_UPLOAD_ABORT: 'sftp-upload-abort',
   SFTP_DOWNLOAD_START: 'sftp-download-start',
   SFTP_DOWNLOAD_ABORT: 'sftp-download-abort',
   // server -> client
@@ -31,6 +32,8 @@ const MSG = {
   DATA: 'data',
   ERROR: 'error',
   HOME_DIR: 'home-dir',
+  SFTP_READY: 'sftp-ready',
+  SFTP_ERROR: 'sftp-error',
   EXEC_RESULT: 'exec-result',
   SERVER_INFO_RESULT: 'server-info-result',
   SFTP_LIST_RESULT: 'sftp-list-result',
@@ -47,6 +50,6 @@ const MSG = {
 };
 
 const PREVIEW_MAX_BYTES = 1024 * 1024;
-const UPLOAD_CHUNK_SIZE = 64 * 1024;
+const UPLOAD_CHUNK_SIZE = 256 * 1024;
 
 module.exports = { MSG, PREVIEW_MAX_BYTES, UPLOAD_CHUNK_SIZE };

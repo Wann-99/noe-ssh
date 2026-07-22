@@ -17,6 +17,7 @@ export const MSG = {
   SFTP_UPLOAD_START: 'sftp-upload-start',
   SFTP_UPLOAD_CHUNK: 'sftp-upload-chunk',
   SFTP_UPLOAD_END: 'sftp-upload-end',
+  SFTP_UPLOAD_ABORT: 'sftp-upload-abort',
   SFTP_DOWNLOAD_START: 'sftp-download-start',
   SFTP_DOWNLOAD_ABORT: 'sftp-download-abort',
   AUTH_OK: 'auth-ok',
@@ -27,6 +28,8 @@ export const MSG = {
   DATA: 'data',
   ERROR: 'error',
   HOME_DIR: 'home-dir',
+  SFTP_READY: 'sftp-ready',
+  SFTP_ERROR: 'sftp-error',
   EXEC_RESULT: 'exec-result',
   SERVER_INFO_RESULT: 'server-info-result',
   SFTP_LIST_RESULT: 'sftp-list-result',
@@ -43,7 +46,8 @@ export const MSG = {
 } as const;
 
 export const PREVIEW_MAX_BYTES = 1024 * 1024;
-export const UPLOAD_CHUNK_SIZE = 64 * 1024;
+/** Preferred transfer chunk size (binary WS frames). */
+export const UPLOAD_CHUNK_SIZE = 256 * 1024;
 
 export type JumpHost = {
   host: string;

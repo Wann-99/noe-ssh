@@ -1,5 +1,40 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
+
+function SecretInput({
+  value,
+  onChange,
+  autoComplete = 'current-password',
+  label,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete?: string;
+  label: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="secret-input">
+      <input
+        className="input"
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        className="secret-toggle"
+        onClick={() => setVisible((current) => !current)}
+        aria-label={`${visible ? '隐藏' : '显示'}${label}`}
+        title={`${visible ? '隐藏' : '显示'}${label}`}
+      >
+        {visible ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
+  );
+}
 
 export function ConnectForm() {
   const form = useAppStore((s) => s.form);
@@ -12,8 +47,9 @@ export function ConnectForm() {
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sess = sessions.find((s) => s.id === activeSessionId);
-  const connected = Boolean(sess?.connected);
-  const connecting = Boolean(sess?.connecting);
+  const connected = sess?.status === 'ready';
+  const connecting = sess?.status === 'connecting';
+  const disconnecting = sess?.status === 'disconnecting';
 
   const [hostOpen, setHostOpen] = useState(false);
   const hostWrapRef = useRef<HTMLDivElement>(null);
@@ -61,7 +97,7 @@ export function ConnectForm() {
               disabled={saved.length === 0}
               onClick={() => setHostOpen((v) => !v)}
             >
-              ▾
+              <ChevronDown size={15} />
             </button>
             {hostOpen && (
               <div className="host-combo-menu" role="listbox">
@@ -100,7 +136,11 @@ export function ConnectForm() {
       {form.authMode === 'password' ? (
         <label className="field">
           <span>密码</span>
-          <input className="input" type="password" value={form.password} onChange={(e) => setForm({ password: e.target.value })} />
+          <SecretInput
+            label="密码"
+            value={form.password}
+            onChange={(password) => setForm({ password })}
+          />
         </label>
       ) : (
         <>
@@ -110,7 +150,12 @@ export function ConnectForm() {
           </label>
           <label className="field">
             <span>密钥口令</span>
-            <input className="input" type="password" value={form.passphrase} onChange={(e) => setForm({ passphrase: e.target.value })} />
+            <SecretInput
+              label="密钥口令"
+              value={form.passphrase}
+              onChange={(passphrase) => setForm({ passphrase })}
+              autoComplete="off"
+            />
           </label>
         </>
       )}
@@ -200,11 +245,24 @@ export function ConnectForm() {
             </label>
             <label className="field">
               <span>跳板密码</span>
-              <input className="input" type="password" value={form.jumpPassword} onChange={(e) => setForm({ jumpPassword: e.target.value })} />
+              <SecretInput
+                label="跳板密码"
+                value={form.jumpPassword}
+                onChange={(jumpPassword) => setForm({ jumpPassword })}
+              />
             </label>
             <label className="field">
               <span>跳板私钥</span>
               <textarea className="input textarea" rows={3} value={form.jumpPrivateKey} onChange={(e) => setForm({ jumpPrivateKey: e.target.value })} />
+            </label>
+            <label className="field">
+              <span>跳板密钥口令</span>
+              <SecretInput
+                label="跳板密钥口令"
+                value={form.jumpPassphrase}
+                onChange={(jumpPassphrase) => setForm({ jumpPassphrase })}
+                autoComplete="off"
+              />
             </label>
             <p className="hint">启用 Jump 时，代理仅用于连接跳板主机。</p>
           </>
@@ -212,7 +270,7 @@ export function ConnectForm() {
       </details>
 
       <div className="form-actions">
-        {!connected ? (
+        {!connected && !disconnecting ? (
           <button
             type="button"
             className="btn btn-primary"
@@ -222,7 +280,14 @@ export function ConnectForm() {
             {connecting ? '连接中…' : '连接'}
           </button>
         ) : (
-          <button type="button" className="btn btn-danger" onClick={() => disconnectActive()}>断开</button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={disconnecting}
+            onClick={() => disconnectActive()}
+          >
+            {disconnecting ? '断开中…' : '断开'}
+          </button>
         )}
         <button
           type="button"

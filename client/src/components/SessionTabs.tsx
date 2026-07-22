@@ -1,3 +1,4 @@
+import { Plus, X } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 
 export function SessionTabs() {
@@ -13,9 +14,10 @@ export function SessionTabs() {
         <button
           key={s.id}
           type="button"
-          className={`session-tab ${s.id === activeSessionId ? 'active' : ''} ${s.connected ? 'live' : ''}`}
+          className={`session-tab ${s.id === activeSessionId ? 'active' : ''} status-${s.status}`}
           onClick={() => setActiveSession(s.id)}
         >
+          <span className="session-status-dot" />
           <span className="tab-label">{s.label}</span>
           <span
             className="tab-close"
@@ -34,12 +36,12 @@ export function SessionTabs() {
               }
             }}
           >
-            ×
+            <X size={13} />
           </span>
         </button>
       ))}
       <button type="button" className="session-tab add" onClick={() => createSession()} title="新建会话" aria-label="新建会话">
-        +
+        <Plus size={15} />
       </button>
     </div>
   );

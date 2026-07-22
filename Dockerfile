@@ -1,4 +1,6 @@
-ARG NODE_IMAGE=node:20-alpine
+# bookworm-slim (glibc): better-sqlite3 can compile / use prebuilds without
+# Alpine's unofficial-builds.nodejs.org header download (often times out in CN).
+ARG NODE_IMAGE=node:22-bookworm-slim
 FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
@@ -6,10 +8,9 @@ WORKDIR /app
 ARG NPM_REGISTRY=
 ARG USE_CN_MIRROR=0
 
-RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
-      sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories; \
-    fi \
- && apk add --no-cache python3 make g++ wget
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
 COPY client/package.json client/package-lock.json* ./client/
@@ -24,7 +25,7 @@ COPY src ./src
 
 RUN npm --prefix client run build
 
-ARG NODE_IMAGE=node:20-alpine
+ARG NODE_IMAGE=node:22-bookworm-slim
 FROM ${NODE_IMAGE}
 
 WORKDIR /app
@@ -32,14 +33,24 @@ WORKDIR /app
 ARG NPM_REGISTRY=
 ARG USE_CN_MIRROR=0
 
-RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
-      sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories; \
-    fi \
- && apk add --no-cache python3 make g++ wget
+# Build tools only for native module compile; stripped after rebuild.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3 make g++ wget ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
+# npm 10+ removed `npm config set disturl`; pass mirror via env for node-gyp.
 RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
- && npm ci --omit=dev --ignore-scripts
+ && npm ci --omit=dev --ignore-scripts \
+ && if [ "$USE_CN_MIRROR" = "1" ]; then \
+      export npm_config_disturl=https://npmmirror.com/mirrors/node; \
+      export NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node; \
+    fi \
+ && npm rebuild better-sqlite3 \
+ && apt-get purge -y python3 make g++ \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 
 COPY src ./src
 COPY shared ./shared
@@ -47,7 +58,8 @@ COPY --from=build /app/dist/client ./dist/client
 
 ENV NODE_ENV=production
 ENV PORT=3000
-# Set NOE_SSH_ACCESS_TOKEN in compose/runtime for Docker deployments
+ENV NOE_SSH_DATA_DIR=/data
+# Prefer NOE_SSH_ADMIN_PASSWORD (account mode). Legacy: NOE_SSH_ACCESS_TOKEN.
 
 EXPOSE 3000
 

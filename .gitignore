@@ -4,6 +4,7 @@ docs/
 .claude/
 .DS_Store
 .env
+data/
 .venv*/
 **/__pycache__/
 *.tar

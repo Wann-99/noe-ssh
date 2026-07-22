@@ -1,23 +1,24 @@
 # Noe-SSH Docker 部署（无需源码）
 
-只需设置访问口令，其余使用默认值。
+推荐使用账号模式：设置管理员密码，数据落在 `./data`（SQLite）。
 
 ## 首次安装
 
 ```bash
-# 下载本目录文件，例如：
 curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/docker-compose.yml -o docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/.env.example -o .env
 
-# 编辑 .env，填写 NOE_SSH_ACCESS_TOKEN（长随机串）
+# 编辑 .env，填写 NOE_SSH_ADMIN_PASSWORD（强密码）
 docker compose up -d
 ```
 
-浏览器打开 http://localhost:3000 ，输入口令即可。
+浏览器打开 http://localhost:3000 ，用管理员账号登录。可在「管理后台」创建用户并查看审计。
+
+遗留单口令：不设管理员密码时，可改用 `NOE_SSH_ACCESS_TOKEN`。
 
 ## 升级到最新镜像
 
-口令与端口配置（`.env`）一般不用改：
+账号、口令与数据卷（`.env` / `./data`）一般不用改：
 
 ```bash
 docker compose pull

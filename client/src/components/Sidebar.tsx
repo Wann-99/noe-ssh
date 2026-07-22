@@ -1,13 +1,14 @@
 import { useState } from 'react';
+import { Bookmark, Code2, History, Plug, Server } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { ConnectForm } from './ConnectForm';
 
 const TABS = [
-  { id: 'connect', label: '连接' },
-  { id: 'saved', label: '已保存' },
-  { id: 'snippets', label: '片段' },
-  { id: 'server', label: '服务器' },
-  { id: 'log', label: '记录' },
+  { id: 'connect', label: '连接', icon: Plug },
+  { id: 'saved', label: '已保存', icon: Bookmark },
+  { id: 'snippets', label: '片段', icon: Code2 },
+  { id: 'server', label: '服务器', icon: Server },
+  { id: 'log', label: '记录', icon: History },
 ];
 
 export function Sidebar() {
@@ -47,9 +48,10 @@ export function Sidebar() {
             className={`sidebar-tab ${tab === t.id ? 'active' : ''}`}
             onClick={() => {
               setTab(t.id);
-              if (t.id === 'server' && sess?.connected) refreshServerInfo();
+              if (t.id === 'server' && sess?.status === 'ready') refreshServerInfo();
             }}
           >
+            <t.icon size={14} />
             {t.label}
           </button>
         ))}
@@ -174,7 +176,7 @@ export function Sidebar() {
         )}
         {tab === 'server' && (
           <div className="panel">
-            {!sess?.connected ? (
+            {sess?.status !== 'ready' ? (
               <div className="empty">连接后查看服务器信息</div>
             ) : !sess.serverInfo ? (
               <button type="button" className="btn btn-primary" onClick={refreshServerInfo}>刷新</button>

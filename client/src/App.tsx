@@ -4,14 +4,15 @@ import { hasVault } from './lib/crypto';
 import { Header } from './components/Header';
 import { SessionTabs } from './components/SessionTabs';
 import { Sidebar } from './components/Sidebar';
-import { TerminalView } from './components/TerminalView';
+import { Workspace } from './components/Workspace';
 import { FilePanel } from './components/FilePanel';
 import { AccessGate } from './components/AccessGate';
+import { AdminPanel } from './components/AdminPanel';
 import { VaultGate } from './components/VaultGate';
-import { PreviewModal } from './components/PreviewModal';
 import { BgModal } from './components/BgModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { Splitter } from './components/Splitter';
+import { ToastHost } from './components/ToastHost';
 
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 480;
@@ -34,6 +35,8 @@ export default function App() {
   const init = useAppStore((s) => s.init);
   const authenticated = useAppStore((s) => s.authenticated);
   const authRequired = useAppStore((s) => s.authRequired);
+  const showAdmin = useAppStore((s) => s.showAdmin);
+  const user = useAppStore((s) => s.user);
   const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
   const bgUrl = useAppStore((s) => s.bgUrl);
   const bgOpacity = useAppStore((s) => s.bgOpacity);
@@ -105,6 +108,15 @@ export default function App() {
     return <AccessGate />;
   }
 
+  if (showAdmin && user?.role === 'admin') {
+    return (
+      <div className="app-shell">
+        <AdminPanel />
+        <ToastHost />
+      </div>
+    );
+  }
+
   if (vaultGate === 'unlock' && !vaultUnlocked) {
     return (
       <VaultGate
@@ -155,8 +167,8 @@ export default function App() {
           onDragEnd={persistSidebar}
         />
         <div className="main-stage">
-          <div className="terminal-pane">
-            <TerminalView />
+          <div className="workbench-pane">
+            <Workspace />
           </div>
           {filePanelOpen && (
             <>
@@ -173,12 +185,12 @@ export default function App() {
           )}
         </div>
       </div>
-      <PreviewModal />
       {bgOpen && <BgModal onClose={() => setBgOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {!hasVault() && (
         <VaultBanner onSetup={() => setVaultGate('setup')} />
       )}
+      <ToastHost />
     </div>
   );
 }

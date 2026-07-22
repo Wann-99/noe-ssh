@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        NODE_IMAGE: ${NODE_IMAGE:-docker.m.daocloud.io/library/node:20-alpine}
+        NODE_IMAGE: ${NODE_IMAGE:-docker.m.daocloud.io/library/node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
         USE_CN_MIRROR: ${USE_CN_MIRROR:-1}
     container_name: noe-ssh
@@ -12,5 +12,10 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
+      - NOE_SSH_DATA_DIR=/data
+      - NOE_SSH_ADMIN_USER=${NOE_SSH_ADMIN_USER:-admin}
+      - NOE_SSH_ADMIN_PASSWORD=${NOE_SSH_ADMIN_PASSWORD:-}
       - NOE_SSH_ACCESS_TOKEN=${NOE_SSH_ACCESS_TOKEN:-}
+    volumes:
+      - ./data:/data
     restart: unless-stopped
