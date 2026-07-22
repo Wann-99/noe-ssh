@@ -20,19 +20,24 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         shell: bash
         run: |
+          # windows-latest ships VS 2026; need npm/node-gyp that recognize VS 18.x
+          npm install -g npm@latest
           npm ci --ignore-scripts
           npm --prefix client ci --no-fund --no-audit
-          # Root install can leave an old node-gyp that cannot detect VS 2022+/2026.
-          npm install node-gyp@11 --no-save --no-fund --no-audit
-
-      - uses: ilammy/msvc-dev-cmd@v1
+          npm install node-gyp@12 --no-save --no-fund --no-audit
 
       - name: Prepare build assets
         shell: bash
         run: |
+          export npm_config_python="$(python -c 'import sys; print(sys.executable)')"
+          export PYTHON="$npm_config_python"
           npm --prefix client run build
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
@@ -78,7 +83,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm --prefix client ci --no-fund --no-audit
-          npm install node-gyp@11 --no-save --no-fund --no-audit
+          npm install node-gyp@12 --no-save --no-fund --no-audit
 
       - name: Prepare build assets
         run: |
@@ -120,7 +125,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm --prefix client ci --no-fund --no-audit
-          npm install node-gyp@11 --no-save --no-fund --no-audit
+          npm install node-gyp@12 --no-save --no-fund --no-audit
 
       - name: Prepare build assets
         run: |
