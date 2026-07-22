@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -25,6 +25,10 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm --prefix client ci --no-fund --no-audit
+          # Root install can leave an old node-gyp that cannot detect VS 2022+/2026.
+          npm install node-gyp@11 --no-save --no-fund --no-audit
+
+      - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Prepare build assets
         shell: bash
@@ -61,13 +65,20 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+
+      - name: Prefer Python 3.12 for native builds
+        run: |
+          brew install python@3.12
+          echo "npm_config_python=$(brew --prefix python@3.12)/bin/python3.12" >> "$GITHUB_ENV"
+          echo "PYTHON=$(brew --prefix python@3.12)/bin/python3.12" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
           npm ci --ignore-scripts
           npm --prefix client ci --no-fund --no-audit
+          npm install node-gyp@11 --no-save --no-fund --no-audit
 
       - name: Prepare build assets
         run: |
@@ -102,13 +113,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: |
           npm ci --ignore-scripts
           npm --prefix client ci --no-fund --no-audit
+          npm install node-gyp@11 --no-save --no-fund --no-audit
 
       - name: Prepare build assets
         run: |

@@ -9,7 +9,7 @@ import https from 'https';
 import { createWriteStream } from 'fs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const NODE_VERSION = '20.18.1';
+const NODE_VERSION = '22.23.1';
 
 const platformMap = {
   darwin: 'darwin',
