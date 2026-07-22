@@ -105,7 +105,12 @@ export default function App() {
   }, [connectActive, disconnectActive]);
 
   if (authRequired && !authenticated) {
-    return <AccessGate />;
+    return (
+      <>
+        <AccessGate />
+        <ToastHost />
+      </>
+    );
   }
 
   if (showAdmin && user?.role === 'admin') {
@@ -137,16 +142,29 @@ export default function App() {
     );
   }
 
+  // bgOpacity = wallpaper visibility through the UI (0–100).
+  // Keep the global veil light so panels don't double-darken the photo;
+  // panel alpha tracks (100 − opacity) so 80% really looks ~80% see-through.
+  const visibility = Math.min(100, Math.max(0, bgOpacity)) / 100;
+  const cover = 1 - visibility;
+  const veil = Number((cover * 0.22).toFixed(3)); // 80%→0.044, 0%→0.22
+  const panelAlpha = Number((0.06 + cover * 0.84).toFixed(3)); // 100%→0.06, 80%→0.228, 0%→0.90
+  const chromeAlpha = Number(Math.min(0.92, panelAlpha + 0.04).toFixed(3));
+  const glassBlur = Math.round(2 + cover * 14); // 100%→2px, 80%→5px, 0%→16px
+
   return (
     <div
       className={`app-shell${bgUrl ? ' has-bg' : ''}`}
       style={
         bgUrl
           ? {
-              backgroundImage: `linear-gradient(rgba(8,12,16,${1 - bgOpacity / 100}), rgba(8,12,16,${1 - bgOpacity / 100})), url(${bgUrl})`,
+              backgroundImage: `linear-gradient(rgba(8,12,16,${veil}), rgba(8,12,16,${veil})), url(${bgUrl})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               backgroundAttachment: 'fixed',
+              ['--bg-panel-alpha' as string]: String(panelAlpha),
+              ['--bg-chrome-alpha' as string]: String(chromeAlpha),
+              ['--glass-blur' as string]: `${glassBlur}px`,
             }
           : undefined
       }
@@ -155,6 +173,7 @@ export default function App() {
         onOpenBg={() => setBgOpen(true)}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onSetupVault={() => setVaultGate('setup')}
+        onUnlockVault={() => setVaultGate('unlock')}
       />
       <SessionTabs />
       <div className="workspace">

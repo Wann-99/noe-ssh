@@ -9,6 +9,8 @@ const MSG = {
   INPUT: 'input',
   RESIZE: 'resize',
   DISCONNECT: 'disconnect',
+  SHELL_OPEN: 'shell-open',
+  SHELL_CLOSE: 'shell-close',
   EXEC: 'exec',
   SERVER_INFO: 'server-info',
   SFTP_LIST: 'sftp-list',
@@ -29,6 +31,8 @@ const MSG = {
   AUTH_FAIL: 'auth-fail',
   CONNECTED: 'connected',
   DISCONNECTED: 'disconnected',
+  SHELL_OPENED: 'shell-opened',
+  SHELL_CLOSED: 'shell-closed',
   DATA: 'data',
   ERROR: 'error',
   HOME_DIR: 'home-dir',
@@ -51,5 +55,13 @@ const MSG = {
 
 const PREVIEW_MAX_BYTES = 1024 * 1024;
 const UPLOAD_CHUNK_SIZE = 256 * 1024;
+const DEFAULT_TERMINAL_ID = 't1';
+const MAX_TERMINALS_PER_SESSION = 8;
 
-module.exports = { MSG, PREVIEW_MAX_BYTES, UPLOAD_CHUNK_SIZE };
+module.exports = {
+  MSG,
+  PREVIEW_MAX_BYTES,
+  UPLOAD_CHUNK_SIZE,
+  DEFAULT_TERMINAL_ID,
+  MAX_TERMINALS_PER_SESSION,
+};

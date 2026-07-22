@@ -124,12 +124,14 @@ function waitForServer(timeoutMs = 30000) {
 }
 
 function createWindow() {
+  const iconPath = path.join(__dirname, 'icons', 'icon.png');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 960,
     minHeight: 600,
     title: 'Noe-SSH',
+    icon: iconPath,
     autoHideMenuBar: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

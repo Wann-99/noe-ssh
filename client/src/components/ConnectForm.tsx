@@ -7,21 +7,25 @@ function SecretInput({
   onChange,
   autoComplete = 'current-password',
   label,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   autoComplete?: string;
   label: string;
+  disabled?: boolean;
 }) {
   const [visible, setVisible] = useState(false);
   return (
-    <div className="secret-input">
+    <div className={`secret-input${disabled ? ' is-locked' : ''}`}>
       <input
         className="input"
         type={visible ? 'text' : 'password'}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         autoComplete={autoComplete}
+        disabled={disabled}
+        readOnly={disabled}
       />
       <button
         type="button"
@@ -29,6 +33,7 @@ function SecretInput({
         onClick={() => setVisible((current) => !current)}
         aria-label={`${visible ? '隐藏' : '显示'}${label}`}
         title={`${visible ? '隐藏' : '显示'}${label}`}
+        disabled={disabled}
       >
         {visible ? <EyeOff size={15} /> : <Eye size={15} />}
       </button>
@@ -50,9 +55,14 @@ export function ConnectForm() {
   const connected = sess?.status === 'ready';
   const connecting = sess?.status === 'connecting';
   const disconnecting = sess?.status === 'disconnecting';
+  const locked = connected || connecting || disconnecting;
 
   const [hostOpen, setHostOpen] = useState(false);
   const hostWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (locked) setHostOpen(false);
+  }, [locked]);
 
   useEffect(() => {
     if (!hostOpen) return;
@@ -71,12 +81,13 @@ export function ConnectForm() {
   }, [hostOpen]);
 
   const pickSaved = async (id: number) => {
+    if (locked) return;
     setHostOpen(false);
     await applySavedConnection(id);
   };
 
   return (
-    <div className="panel connect-form">
+    <div className={`panel connect-form${locked ? ' is-locked' : ''}`}>
       <div className="form-row">
         <label className="field grow">
           <span>主机</span>
@@ -87,6 +98,8 @@ export function ConnectForm() {
               onChange={(e) => setForm({ host: e.target.value })}
               placeholder=""
               autoComplete="off"
+              disabled={locked}
+              readOnly={locked}
             />
             <button
               type="button"
@@ -94,12 +107,12 @@ export function ConnectForm() {
               title="选择已保存主机"
               aria-label="选择已保存主机"
               aria-expanded={hostOpen}
-              disabled={saved.length === 0}
+              disabled={locked || saved.length === 0}
               onClick={() => setHostOpen((v) => !v)}
             >
               <ChevronDown size={15} />
             </button>
-            {hostOpen && (
+            {hostOpen && !locked && (
               <div className="host-combo-menu" role="listbox">
                 {saved.length === 0 ? (
                   <div className="host-combo-empty">暂无已保存主机</div>
@@ -125,12 +138,26 @@ export function ConnectForm() {
         </label>
         <label className="field sm">
           <span>端口</span>
-          <input className="input" type="number" value={form.port} onChange={(e) => setForm({ port: Number(e.target.value) || 22 })} />
+          <input
+            className="input"
+            type="number"
+            value={form.port}
+            onChange={(e) => setForm({ port: Number(e.target.value) || 22 })}
+            disabled={locked}
+            readOnly={locked}
+          />
         </label>
       </div>
       <label className="field">
         <span>用户名</span>
-        <input className="input" value={form.username} onChange={(e) => setForm({ username: e.target.value })} placeholder="" />
+        <input
+          className="input"
+          value={form.username}
+          onChange={(e) => setForm({ username: e.target.value })}
+          placeholder=""
+          disabled={locked}
+          readOnly={locked}
+        />
       </label>
 
       {form.authMode === 'password' ? (
@@ -140,13 +167,21 @@ export function ConnectForm() {
             label="密码"
             value={form.password}
             onChange={(password) => setForm({ password })}
+            disabled={locked}
           />
         </label>
       ) : (
         <>
           <label className="field">
             <span>私钥 (PEM)</span>
-            <textarea className="input textarea" rows={4} value={form.privateKey} onChange={(e) => setForm({ privateKey: e.target.value })} />
+            <textarea
+              className="input textarea"
+              rows={4}
+              value={form.privateKey}
+              onChange={(e) => setForm({ privateKey: e.target.value })}
+              disabled={locked}
+              readOnly={locked}
+            />
           </label>
           <label className="field">
             <span>密钥口令</span>
@@ -155,6 +190,7 @@ export function ConnectForm() {
               value={form.passphrase}
               onChange={(passphrase) => setForm({ passphrase })}
               autoComplete="off"
+              disabled={locked}
             />
           </label>
         </>
@@ -165,6 +201,7 @@ export function ConnectForm() {
           type="button"
           className={form.authMode === 'password' ? 'active' : ''}
           onClick={() => setForm({ authMode: 'password' })}
+          disabled={locked}
         >
           密码
         </button>
@@ -172,6 +209,7 @@ export function ConnectForm() {
           type="button"
           className={form.authMode === 'key' ? 'active' : ''}
           onClick={() => setForm({ authMode: 'key' })}
+          disabled={locked}
         >
           密钥
         </button>
@@ -182,6 +220,7 @@ export function ConnectForm() {
           type="checkbox"
           checked={form.x11Forward}
           onChange={(e) => setForm({ x11Forward: e.target.checked })}
+          disabled={locked}
         />
         X11 转发（ssh -X）
       </label>
@@ -192,6 +231,7 @@ export function ConnectForm() {
               type="checkbox"
               checked={form.x11Trusted}
               onChange={(e) => setForm({ x11Trusted: e.target.checked })}
+              disabled={locked}
             />
             信任 X11（ssh -Y）
           </label>
@@ -205,7 +245,12 @@ export function ConnectForm() {
         <summary>代理 / ProxyJump</summary>
         <label className="field">
           <span>代理类型</span>
-          <select className="input" value={form.proxyType} onChange={(e) => setForm({ proxyType: e.target.value })}>
+          <select
+            className="input"
+            value={form.proxyType}
+            onChange={(e) => setForm({ proxyType: e.target.value })}
+            disabled={locked}
+          >
             <option value="">无</option>
             <option value="http">HTTP</option>
             <option value="socks5">SOCKS5</option>
@@ -215,16 +260,34 @@ export function ConnectForm() {
           <div className="form-row">
             <label className="field grow">
               <span>代理主机</span>
-              <input className="input" value={form.proxyHost} onChange={(e) => setForm({ proxyHost: e.target.value })} />
+              <input
+                className="input"
+                value={form.proxyHost}
+                onChange={(e) => setForm({ proxyHost: e.target.value })}
+                disabled={locked}
+                readOnly={locked}
+              />
             </label>
             <label className="field sm">
               <span>端口</span>
-              <input className="input" type="number" value={form.proxyPort || ''} onChange={(e) => setForm({ proxyPort: Number(e.target.value) || 0 })} />
+              <input
+                className="input"
+                type="number"
+                value={form.proxyPort || ''}
+                onChange={(e) => setForm({ proxyPort: Number(e.target.value) || 0 })}
+                disabled={locked}
+                readOnly={locked}
+              />
             </label>
           </div>
         )}
         <label className="check">
-          <input type="checkbox" checked={form.useJump} onChange={(e) => setForm({ useJump: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={form.useJump}
+            onChange={(e) => setForm({ useJump: e.target.checked })}
+            disabled={locked}
+          />
           使用 ProxyJump（一级跳板）
         </label>
         {form.useJump && (
@@ -232,16 +295,35 @@ export function ConnectForm() {
             <div className="form-row">
               <label className="field grow">
                 <span>跳板主机</span>
-                <input className="input" value={form.jumpHost} onChange={(e) => setForm({ jumpHost: e.target.value })} />
+                <input
+                  className="input"
+                  value={form.jumpHost}
+                  onChange={(e) => setForm({ jumpHost: e.target.value })}
+                  disabled={locked}
+                  readOnly={locked}
+                />
               </label>
               <label className="field sm">
                 <span>端口</span>
-                <input className="input" type="number" value={form.jumpPort} onChange={(e) => setForm({ jumpPort: Number(e.target.value) || 22 })} />
+                <input
+                  className="input"
+                  type="number"
+                  value={form.jumpPort}
+                  onChange={(e) => setForm({ jumpPort: Number(e.target.value) || 22 })}
+                  disabled={locked}
+                  readOnly={locked}
+                />
               </label>
             </div>
             <label className="field">
               <span>跳板用户</span>
-              <input className="input" value={form.jumpUsername} onChange={(e) => setForm({ jumpUsername: e.target.value })} />
+              <input
+                className="input"
+                value={form.jumpUsername}
+                onChange={(e) => setForm({ jumpUsername: e.target.value })}
+                disabled={locked}
+                readOnly={locked}
+              />
             </label>
             <label className="field">
               <span>跳板密码</span>
@@ -249,11 +331,19 @@ export function ConnectForm() {
                 label="跳板密码"
                 value={form.jumpPassword}
                 onChange={(jumpPassword) => setForm({ jumpPassword })}
+                disabled={locked}
               />
             </label>
             <label className="field">
               <span>跳板私钥</span>
-              <textarea className="input textarea" rows={3} value={form.jumpPrivateKey} onChange={(e) => setForm({ jumpPrivateKey: e.target.value })} />
+              <textarea
+                className="input textarea"
+                rows={3}
+                value={form.jumpPrivateKey}
+                onChange={(e) => setForm({ jumpPrivateKey: e.target.value })}
+                disabled={locked}
+                readOnly={locked}
+              />
             </label>
             <label className="field">
               <span>跳板密钥口令</span>
@@ -262,6 +352,7 @@ export function ConnectForm() {
                 value={form.jumpPassphrase}
                 onChange={(jumpPassphrase) => setForm({ jumpPassphrase })}
                 autoComplete="off"
+                disabled={locked}
               />
             </label>
             <p className="hint">启用 Jump 时，代理仅用于连接跳板主机。</p>

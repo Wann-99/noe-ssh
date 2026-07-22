@@ -33,10 +33,10 @@ WORKDIR /app
 ARG NPM_REGISTRY=
 ARG USE_CN_MIRROR=0
 
-# Build tools only for native module compile; stripped after rebuild.
+# Build tools for native module compile; keep wget/xauth for healthcheck + X11.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      python3 make g++ wget ca-certificates \
+      python3 make g++ wget ca-certificates xauth \
  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./

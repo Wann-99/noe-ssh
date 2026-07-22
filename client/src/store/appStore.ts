@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import type { CmdLogItem, JumpHost, RemoteFile } from '@shared/protocol';
-import { MSG } from '@shared/protocol';
+import {
+  DEFAULT_TERMINAL_ID,
+  MAX_TERMINALS_PER_SESSION,
+  MSG,
+} from '@shared/protocol';
 import { WS_BIN_KIND, PROGRESS_THROTTLE_MS } from '@shared/wsBinary';
 import { sshSocket } from '../lib/ws';
 import {
@@ -14,6 +18,7 @@ import {
   unlockVault,
   type SecretFields,
 } from '../lib/crypto';
+import { BG_DATA_URL_MAX, loadStoredBgUrl } from '../lib/bgImage';
 
 type DownloadBuf = {
   parts: BlobPart[];
@@ -59,6 +64,11 @@ export type ToastItem = {
   message?: string;
 };
 
+export type TerminalPane = {
+  id: string;
+  title: string;
+};
+
 export type SessionState = {
   id: string;
   label: string;
@@ -71,13 +81,18 @@ export type SessionState = {
   remotePath: string;
   files: RemoteFile[];
   cmdLog: CmdLogItem[];
-  serverInfo: Record<string, string> | null;
+  serverInfo: Record<string, string> | null; // flat KEY fields from SERVER_INFO_RESULT
   transferProgress: { id: string; written: number; total: number; kind: 'up' | 'down' } | null;
   listRequestId: string | null;
   listLoading: boolean;
   fileOperation: string | null;
   workspaceMode: 'terminal' | 'editor';
   activeEditorId: string | null;
+  /** Interactive shells within this SSH session. */
+  terminals: TerminalPane[];
+  activeTerminalId: string | null;
+  /** Monotonic counter for "终端 N" titles. */
+  terminalSeq: number;
   startedAt: number | null;
 };
 
@@ -146,6 +161,7 @@ type AppState = {
   setFontSize: (n: number) => void;
   toggleFilePanel: () => void;
   setBg: (url: string, opacity: number) => void;
+  setBgOpacity: (opacity: number) => void;
   clearBg: () => void;
   createSession: () => string;
   setActiveSession: (id: string) => void;
@@ -154,8 +170,11 @@ type AppState = {
   applySavedConnection: (id: number) => Promise<boolean>;
   connectSaved: (id: number) => Promise<void>;
   disconnectActive: () => void;
-  sendInput: (data: string, sessionId?: string) => void;
-  sendResize: (cols: number, rows: number, sessionId?: string) => void;
+  sendInput: (data: string, sessionId?: string, terminalId?: string) => void;
+  sendResize: (cols: number, rows: number, sessionId?: string, terminalId?: string) => void;
+  setActiveTerminal: (terminalId: string, sessionId?: string) => void;
+  openTerminal: (sessionId?: string) => void;
+  closeTerminal: (terminalId: string, sessionId?: string) => void;
   listFiles: (path?: string, sessionId?: string) => void;
   addCmdLog: (type: string, cmd: string, desc: string) => void;
   saveCurrentConnection: (name: string) => Promise<void>;
@@ -215,6 +234,14 @@ const defaultForm = (): ConnectForm => ({
   x11Trusted: false,
 });
 
+function defaultTerminals(): Pick<SessionState, 'terminals' | 'activeTerminalId' | 'terminalSeq'> {
+  return {
+    terminals: [{ id: DEFAULT_TERMINAL_ID, title: '终端 1' }],
+    activeTerminalId: DEFAULT_TERMINAL_ID,
+    terminalSeq: 1,
+  };
+}
+
 function newSession(label = '新会话'): SessionState {
   return {
     id: `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -232,8 +259,53 @@ function newSession(label = '新会话'): SessionState {
     fileOperation: null,
     workspaceMode: 'terminal',
     activeEditorId: null,
+    ...defaultTerminals(),
     startedAt: null,
   };
+}
+
+function resolveTerminalId(session: SessionState | undefined, terminalId?: string) {
+  if (terminalId) return terminalId;
+  return session?.activeTerminalId || session?.terminals[0]?.id || DEFAULT_TERMINAL_ID;
+}
+
+function titleNumber(title: string) {
+  const match = /^终端\s*(\d+)$/.exec(title);
+  return match ? Number(match[1]) : 0;
+}
+
+/** Pick the smallest free "终端 N" label among existing panes. */
+function allocateTerminalPane(terminals: TerminalPane[]) {
+  const used = new Set(terminals.map((pane) => titleNumber(pane.title)).filter((n) => n > 0));
+  let n = 1;
+  while (used.has(n)) n += 1;
+  return {
+    id: `t${n}-${Math.random().toString(36).slice(2, 6)}`,
+    title: `终端 ${n}`,
+    seq: Math.max(n, ...used, 1),
+  };
+}
+
+function dropTerminalPane(session: SessionState, terminalId: string) {
+  const terminals = session.terminals.filter((pane) => pane.id !== terminalId);
+  const used = terminals.map((pane) => titleNumber(pane.title)).filter((n) => n > 0);
+  return {
+    terminals,
+    activeTerminalId: session.activeTerminalId === terminalId
+      ? (terminals[terminals.length - 1]?.id || null)
+      : session.activeTerminalId,
+    terminalSeq: used.length ? Math.max(...used) : 1,
+  };
+}
+
+function emitTermWrite(sessionId: string, data: string | Uint8Array, terminalId?: string) {
+  window.dispatchEvent(new CustomEvent('ssh-term-write', {
+    detail: {
+      sessionId,
+      terminalId: terminalId || DEFAULT_TERMINAL_ID,
+      data,
+    },
+  }));
 }
 
 function patchSession(
@@ -247,6 +319,11 @@ function patchSession(
 const connectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const shellOpenTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function shellOpenKey(sessionId: string, terminalId: string) {
+  return `${sessionId}::${terminalId}`;
+}
 
 function clearTimer(
   timers: Map<string, ReturnType<typeof setTimeout>>,
@@ -287,7 +364,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarTab: 'connect',
   termFontSize: parseInt(localStorage.getItem('ssh_font_size') || '14', 10) || 14,
   filePanelOpen: true,
-  bgUrl: localStorage.getItem('ssh_bg_url') || '',
+  bgUrl: loadStoredBgUrl(),
   bgOpacity: parseInt(localStorage.getItem('ssh_bg_opacity') || '15', 10) || 15,
   form: defaultForm(),
   snippets: (() => {
@@ -442,13 +519,32 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   toggleFilePanel: () => set({ filePanelOpen: !get().filePanelOpen }),
   setBg: (url, opacity) => {
-    localStorage.setItem('ssh_bg_url', url);
-    localStorage.setItem('ssh_bg_opacity', String(opacity));
-    set({ bgUrl: url, bgOpacity: opacity });
+    if (url && url.length > BG_DATA_URL_MAX) {
+      get().notify('error', '背景图过大', '请换更小的图后再试');
+      return;
+    }
+    const nextOpacity = Math.min(100, Math.max(0, Math.round(opacity)));
+    try {
+      if (url) localStorage.setItem('ssh_bg_url', url);
+      else localStorage.removeItem('ssh_bg_url');
+      localStorage.setItem('ssh_bg_opacity', String(nextOpacity));
+    } catch {
+      get().notify('error', '背景图过大', '请换更小的图后再试');
+      return;
+    }
+    set({ bgUrl: url, bgOpacity: nextOpacity });
+  },
+  setBgOpacity: (opacity) => {
+    // Preview-only; persist happens in setBg / clearBg.
+    set({ bgOpacity: Math.min(100, Math.max(0, Math.round(opacity))) });
   },
   clearBg: () => {
-    localStorage.removeItem('ssh_bg_url');
-    localStorage.removeItem('ssh_bg_opacity');
+    try {
+      localStorage.removeItem('ssh_bg_url');
+      localStorage.removeItem('ssh_bg_opacity');
+    } catch {
+      /* ignore */
+    }
     set({ bgUrl: '', bgOpacity: 15 });
   },
   notify: (kind, title, message) => {
@@ -510,14 +606,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         error: null,
         files: [],
         transferProgress: null,
+        ...defaultTerminals(),
       }),
     });
-    window.dispatchEvent(new CustomEvent('ssh-term-write', {
-      detail: {
-        sessionId: activeSessionId,
-        data: `\r\n\x1b[36m正在连接 ${form.username}@${form.host}:${form.port}…\x1b[0m\r\n`,
-      },
-    }));
+    emitTermWrite(
+      activeSessionId,
+      `\r\n\x1b[36m正在连接 ${form.username}@${form.host}:${form.port}…\x1b[0m\r\n`,
+      DEFAULT_TERMINAL_ID,
+    );
 
     try {
       await sshSocket.ensureOpen();
@@ -530,12 +626,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           error: msg,
         }),
       });
-      window.dispatchEvent(new CustomEvent('ssh-term-write', {
-        detail: {
-          sessionId: activeSessionId,
-          data: `\r\n\x1b[31m${msg}\x1b[0m\r\n`,
-        },
-      }));
+      emitTermWrite(activeSessionId, `\r\n\x1b[31m${msg}\x1b[0m\r\n`, DEFAULT_TERMINAL_ID);
       get().notify('error', '连接失败', msg);
       return;
     }
@@ -561,6 +652,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sent = sshSocket.send({
       type: MSG.CONNECT,
       sessionId: activeSessionId,
+      terminalId: DEFAULT_TERMINAL_ID,
       host: form.host,
       port: form.port,
       username: form.username,
@@ -676,6 +768,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           startedAt: null,
           files: [],
           transferProgress: null,
+          ...defaultTerminals(),
         }),
       });
       return;
@@ -691,21 +784,112 @@ export const useAppStore = create<AppState>((set, get) => ({
           startedAt: null,
           files: [],
           transferProgress: null,
+          ...defaultTerminals(),
         }),
       });
     }, 5_000));
   },
 
-  sendInput: (data, sessionId) => {
+  sendInput: (data, sessionId, terminalId) => {
     const id = sessionId || get().activeSessionId;
     if (!id) return;
-    sshSocket.send({ type: MSG.INPUT, sessionId: id, data });
+    const sess = get().sessions.find((item) => item.id === id);
+    const tid = resolveTerminalId(sess, terminalId);
+    sshSocket.send({ type: MSG.INPUT, sessionId: id, terminalId: tid, data });
   },
 
-  sendResize: (cols, rows, sessionId) => {
+  sendResize: (cols, rows, sessionId, terminalId) => {
     const id = sessionId || get().activeSessionId;
     if (!id) return;
-    sshSocket.send({ type: MSG.RESIZE, sessionId: id, cols, rows });
+    const sess = get().sessions.find((item) => item.id === id);
+    const tid = resolveTerminalId(sess, terminalId);
+    sshSocket.send({ type: MSG.RESIZE, sessionId: id, terminalId: tid, cols, rows });
+  },
+
+  setActiveTerminal: (terminalId, sessionId) => {
+    const id = sessionId || get().activeSessionId;
+    if (!id) return;
+    const sess = get().sessions.find((item) => item.id === id);
+    if (!sess?.terminals.some((term) => term.id === terminalId)) return;
+    set({
+      sessions: patchSession(get().sessions, id, {
+        activeTerminalId: terminalId,
+        workspaceMode: 'terminal',
+      }),
+    });
+  },
+
+  openTerminal: (sessionId) => {
+    const id = sessionId || get().activeSessionId;
+    const sess = get().sessions.find((item) => item.id === id);
+    if (!id || !sess) return;
+    if (sess.status !== 'ready') {
+      get().notify('warning', '请先连接会话', '连接成功后再打开多个终端');
+      return;
+    }
+    if (sess.terminals.length >= MAX_TERMINALS_PER_SESSION) {
+      get().notify('warning', '终端数量已达上限', `每个会话最多 ${MAX_TERMINALS_PER_SESSION} 个终端`);
+      return;
+    }
+    const pane = allocateTerminalPane(sess.terminals);
+    set({
+      sessions: patchSession(get().sessions, id, {
+        terminals: [...sess.terminals, { id: pane.id, title: pane.title }],
+        activeTerminalId: pane.id,
+        terminalSeq: pane.seq,
+        workspaceMode: 'terminal',
+      }),
+    });
+    const sent = sshSocket.send({
+      type: MSG.SHELL_OPEN,
+      sessionId: id,
+      terminalId: pane.id,
+      cols: 120,
+      rows: 36,
+    });
+    if (!sent) {
+      set({
+        sessions: patchSession(get().sessions, id, {
+          terminals: sess.terminals,
+          activeTerminalId: sess.activeTerminalId,
+          terminalSeq: sess.terminalSeq,
+        }),
+      });
+      get().notify('error', '无法打开终端', '控制连接已断开');
+      return;
+    }
+    const key = shellOpenKey(id, pane.id);
+    clearTimer(shellOpenTimers, key);
+    shellOpenTimers.set(key, setTimeout(() => {
+      shellOpenTimers.delete(key);
+      const current = get().sessions.find((item) => item.id === id);
+      if (!current?.terminals.some((term) => term.id === pane.id)) return;
+      set({
+        sessions: patchSession(get().sessions, id, dropTerminalPane(current, pane.id)),
+      });
+      get().notify(
+        'error',
+        '无法打开终端',
+        '后端未支持多终端（请重启 npm start / 后端进程后再连接）',
+      );
+    }, 5_000));
+  },
+
+  closeTerminal: (terminalId, sessionId) => {
+    const id = sessionId || get().activeSessionId;
+    const sess = get().sessions.find((item) => item.id === id);
+    if (!id || !sess) return;
+    if (sess.terminals.length <= 1) {
+      get().notify('warning', '无法关闭', '至少保留一个终端窗口');
+      return;
+    }
+    if (!sess.terminals.some((term) => term.id === terminalId)) return;
+    set({
+      sessions: patchSession(get().sessions, id, dropTerminalPane(sess, terminalId)),
+    });
+    if (sess.status === 'ready') {
+      sshSocket.send({ type: MSG.SHELL_CLOSE, sessionId: id, terminalId });
+    }
   },
 
   listFiles: (path, sessionId) => {
@@ -1134,6 +1318,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           listRequestId: null,
           fileOperation: null,
           transferProgress: null,
+          ...defaultTerminals(),
         })),
         editors: get().editors.map((editor) => ({
           ...editor,
@@ -1150,13 +1335,56 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (type === MSG.CONNECTED) {
       clearTimer(connectTimers, sessionId);
+      const terminalId = String(msg.terminalId || DEFAULT_TERMINAL_ID);
+      const current = get().sessions.find((item) => item.id === sessionId);
+      const hasPrimary = current?.terminals.some((term) => term.id === terminalId);
       set({
         sessions: patchSession(get().sessions, sessionId, {
           status: 'ready',
           sftpStatus: 'connecting',
           error: null,
           startedAt: Date.now(),
+          terminals: hasPrimary
+            ? (current?.terminals || defaultTerminals().terminals)
+            : [{ id: terminalId, title: '终端 1' }],
+          activeTerminalId: terminalId,
+          terminalSeq: Math.max(current?.terminalSeq || 1, 1),
         }),
+      });
+      return;
+    }
+
+    if (type === MSG.SHELL_OPENED) {
+      const terminalId = String(msg.terminalId || '');
+      if (!terminalId) return;
+      clearTimer(shellOpenTimers, shellOpenKey(sessionId, terminalId));
+      const current = get().sessions.find((item) => item.id === sessionId);
+      if (!current) return;
+      if (!current.terminals.some((term) => term.id === terminalId)) {
+        const seq = current.terminalSeq + 1;
+        set({
+          sessions: patchSession(get().sessions, sessionId, {
+            terminals: [...current.terminals, { id: terminalId, title: `终端 ${seq}` }],
+            activeTerminalId: terminalId,
+            terminalSeq: seq,
+          }),
+        });
+      }
+      // Ensure the new pane gets a correct pty size after the shell is ready.
+      window.setTimeout(() => {
+        window.dispatchEvent(new Event('ssh-layout-resize'));
+      }, 30);
+      return;
+    }
+
+    if (type === MSG.SHELL_CLOSED) {
+      const terminalId = String(msg.terminalId || '');
+      if (!terminalId) return;
+      const current = get().sessions.find((item) => item.id === sessionId);
+      if (!current?.terminals.some((term) => term.id === terminalId)) return;
+      if (current.terminals.length <= 1) return;
+      set({
+        sessions: patchSession(get().sessions, sessionId, dropTerminalPane(current, terminalId)),
       });
       return;
     }
@@ -1199,6 +1427,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           listRequestId: null,
           fileOperation: null,
           transferProgress: null,
+          ...defaultTerminals(),
         }),
         editors: get().editors.map((editor) => (
           editor.sessionId === sessionId
@@ -1213,6 +1442,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       clearTimer(connectTimers, sessionId);
       const message = String(msg.data || 'SSH 连接错误');
       const current = get().sessions.find((session) => session.id === sessionId);
+      const errTerminalId = msg.terminalId ? String(msg.terminalId) : '';
+      // Non-fatal shell-open failure: drop the optimistic pane.
+      if (
+        !msg.fatal
+        && errTerminalId
+        && errTerminalId !== DEFAULT_TERMINAL_ID
+        && current
+        && current.status === 'ready'
+        && current.terminals.some((term) => term.id === errTerminalId)
+      ) {
+        clearTimer(shellOpenTimers, shellOpenKey(sessionId, errTerminalId));
+        set({
+          sessions: patchSession(get().sessions, sessionId, dropTerminalPane(current, errTerminalId)),
+        });
+        get().notify('error', '无法打开终端', message);
+        return;
+      }
       set({
         sessions: patchSession(get().sessions, sessionId, {
           status: msg.fatal || current?.status === 'connecting' ? 'error' : (current?.status || 'error'),
@@ -1221,17 +1467,22 @@ export const useAppStore = create<AppState>((set, get) => ({
           startedAt: msg.fatal ? null : current?.startedAt || null,
         }),
       });
-      window.dispatchEvent(new CustomEvent('ssh-term-write', {
-        detail: { sessionId, data: `\r\n\x1b[31m${message}\x1b[0m\r\n` },
-      }));
+      emitTermWrite(
+        sessionId,
+        `\r\n\x1b[31m${message}\x1b[0m\r\n`,
+        String(msg.terminalId || resolveTerminalId(current)),
+      );
       get().notify('error', 'SSH 错误', message);
       return;
     }
 
     if (type === MSG.DATA) {
-      window.dispatchEvent(new CustomEvent('ssh-term-write', {
-        detail: { sessionId, data: msg.data as string },
-      }));
+      const current = get().sessions.find((item) => item.id === sessionId);
+      emitTermWrite(
+        sessionId,
+        msg.data as string,
+        String(msg.terminalId || resolveTerminalId(current)),
+      );
       return;
     }
 
@@ -1534,7 +1785,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const text = msg.error
         ? `\r\n\x1b[31m${msg.error}\x1b[0m\r\n`
         : `\r\n${msg.output || ''}\r\n`;
-      window.dispatchEvent(new CustomEvent('ssh-term-write', { detail: { sessionId, data: text } }));
+      const current = get().sessions.find((item) => item.id === sessionId);
+      emitTermWrite(sessionId, text, resolveTerminalId(current));
     }
   },
 }));

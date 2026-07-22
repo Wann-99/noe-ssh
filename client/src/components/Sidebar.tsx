@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Bookmark, Code2, History, Plug, Server } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { ConnectForm } from './ConnectForm';
@@ -10,6 +10,72 @@ const TABS = [
   { id: 'server', label: '服务器', icon: Server },
   { id: 'log', label: '记录', icon: History },
 ];
+
+function InfoRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="server-info-row">
+      <span className="server-info-label">{label}</span>
+      <span className="server-info-value" title={value || '—'}>{value || '—'}</span>
+    </div>
+  );
+}
+
+function InfoSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="server-info-section">
+      <h3 className="server-info-section-title">{title}</h3>
+      <div className="server-info-grid">{children}</div>
+    </section>
+  );
+}
+
+function ServerInfoView({ info }: { info: Record<string, string> }) {
+  // Backward compatible: old clients/servers may still send mem/disk/load blobs.
+  if (info.mem || info.disk || info.load) {
+    return (
+      <dl className="server-info">
+        {Object.entries(info).map(([k, v]) => (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd>{v || '—'}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  return (
+    <div className="server-info-view">
+      <InfoSection title="基本信息">
+        <InfoRow label="主机" value={info.host} />
+        <InfoRow label="系统" value={info.os} />
+        <InfoRow label="运行时间" value={info.uptime} />
+        <InfoRow label="CPU 核心" value={info.cpu} />
+      </InfoSection>
+      <InfoSection title="内存">
+        <InfoRow label="总量" value={info.memTotal} />
+        <InfoRow label="已用" value={info.memUsed} />
+        <InfoRow label="空闲" value={info.memFree} />
+        <InfoRow label="可用" value={info.memAvailable} />
+        <InfoRow label="缓存" value={info.memCache} />
+        <InfoRow label="共享" value={info.memShared} />
+      </InfoSection>
+      <InfoSection title="根分区">
+        <InfoRow label="设备" value={info.diskFs} />
+        <InfoRow label="容量" value={info.diskSize} />
+        <InfoRow label="已用" value={info.diskUsed} />
+        <InfoRow label="剩余" value={info.diskAvail} />
+        <InfoRow label="使用率" value={info.diskUse} />
+        <InfoRow label="挂载点" value={info.diskMount} />
+      </InfoSection>
+      <InfoSection title="负载">
+        <InfoRow label="1 分钟" value={info.load1} />
+        <InfoRow label="5 分钟" value={info.load5} />
+        <InfoRow label="15 分钟" value={info.load15} />
+      </InfoSection>
+    </div>
+  );
+}
 
 export function Sidebar() {
   const tab = useAppStore((s) => s.sidebarTab);
@@ -24,7 +90,6 @@ export function Sidebar() {
   const snippets = useAppStore((s) => s.snippets);
   const setSnippets = useAppStore((s) => s.setSnippets);
   const sendInput = useAppStore((s) => s.sendInput);
-  const runExec = useAppStore((s) => s.runExec);
   const refreshServerInfo = useAppStore((s) => s.refreshServerInfo);
   const sess = sessions.find((s) => s.id === activeSessionId);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -98,33 +163,34 @@ export function Sidebar() {
           </div>
         )}
         {tab === 'snippets' && (
-          <div className="panel">
+          <div className="panel panel-snippets">
             {snippets.length === 0 ? (
               <div className="empty">暂无片段，可添加常用命令</div>
             ) : (
               <p className="hint snip-hint">拖拽左侧 ⋮⋮ 可调整顺序</p>
             )}
-            {snippets.map((s, i) => (
-              <div
-                key={`${s.name}::${s.cmd}::${i}`}
-                className={`card snippet-item${dragIndex === i ? ' dragging' : ''}${overIndex === i && dragIndex !== i ? ' drag-over' : ''}`}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  if (overIndex !== i) setOverIndex(i);
-                }}
-                onDragLeave={() => {
-                  if (overIndex === i) setOverIndex(null);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const from = Number(e.dataTransfer.getData('text/plain'));
-                  reorderSnippets(Number.isFinite(from) ? from : (dragIndex ?? -1), i);
-                  setDragIndex(null);
-                  setOverIndex(null);
-                }}
-              >
-                <div className="snip-head">
+            <div className="snip-list">
+              {snippets.map((s, i) => (
+                <div
+                  key={`${s.name}::${s.cmd}::${i}`}
+                  className={`snippet-item${dragIndex === i ? ' dragging' : ''}${overIndex === i && dragIndex !== i ? ' drag-over' : ''}`}
+                  title={s.cmd}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (overIndex !== i) setOverIndex(i);
+                  }}
+                  onDragLeave={() => {
+                    if (overIndex === i) setOverIndex(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = Number(e.dataTransfer.getData('text/plain'));
+                    reorderSnippets(Number.isFinite(from) ? from : (dragIndex ?? -1), i);
+                    setDragIndex(null);
+                    setOverIndex(null);
+                  }}
+                >
                   <span
                     className="snip-handle"
                     title="拖拽排序"
@@ -133,9 +199,9 @@ export function Sidebar() {
                       setDragIndex(i);
                       e.dataTransfer.effectAllowed = 'move';
                       e.dataTransfer.setData('text/plain', String(i));
-                      const card = (e.currentTarget as HTMLElement).closest('.snippet-item');
-                      if (card instanceof HTMLElement) {
-                        e.dataTransfer.setDragImage(card, 24, 16);
+                      const row = (e.currentTarget as HTMLElement).closest('.snippet-item');
+                      if (row instanceof HTMLElement) {
+                        e.dataTransfer.setDragImage(row, 16, 12);
                       }
                     }}
                     onDragEnd={() => {
@@ -145,22 +211,31 @@ export function Sidebar() {
                   >
                     ⋮⋮
                   </span>
-                  <div className="snip-name">{s.name}</div>
+                  <div className="snip-main">
+                    <div className="snip-name">{s.name}</div>
+                    <code className="snip-cmd">{s.cmd}</code>
+                  </div>
+                  <div className="snip-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs"
+                      onClick={() => sendInput(`${s.cmd}\n`)}
+                      title="发送到终端"
+                    >
+                      发送
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs snip-del"
+                      onClick={() => setSnippets(snippets.filter((_, j) => j !== i))}
+                      title="删除"
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
-                <code className="snip-cmd">{s.cmd}</code>
-                <div className="snip-actions">
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => sendInput(`${s.cmd}\n`)}>发送</button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => runExec(s.cmd, `snip-${i}`)}>执行</button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setSnippets(snippets.filter((_, j) => j !== i))}
-                  >
-                    删
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
             <button
               type="button"
               className="btn btn-primary btn-block"
@@ -182,14 +257,11 @@ export function Sidebar() {
               <button type="button" className="btn btn-primary" onClick={refreshServerInfo}>刷新</button>
             ) : (
               <div className="card server-card">
-                <dl className="server-info">
-                  {Object.entries(sess.serverInfo).map(([k, v]) => (
-                    <div key={k}>
-                      <dt>{k}</dt>
-                      <dd>{v || '—'}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <div className="server-info-head">
+                  <span>服务器信息</span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={refreshServerInfo}>刷新</button>
+                </div>
+                <ServerInfoView info={sess.serverInfo} />
               </div>
             )}
           </div>

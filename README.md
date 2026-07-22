@@ -92,8 +92,10 @@ npm run electron:dev
 mkdir noe-ssh && cd noe-ssh
 curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/docker-compose.yml -o docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/.env.example -o .env
+curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/docker-start.sh -o docker-start.sh
+chmod +x docker-start.sh
 # 编辑 .env：填写 NOE_SSH_ADMIN_PASSWORD（可选改 NOE_SSH_ADMIN_USER）
-docker compose up -d
+./docker-start.sh
 ```
 
 访问 http://localhost:3000 ，用管理员账号登录。管理员可在「管理后台」创建普通用户、查看审计。
@@ -107,7 +109,7 @@ docker compose up -d
 ```bash
 cp .env.example .env
 # 务必修改 NOE_SSH_ADMIN_PASSWORD
-docker compose up -d --build
+./docker-start.sh
 ```
 
 未设置任何认证时服务仍可启动（桌面/便携默认），但**不建议**将端口暴露到公网。
@@ -198,9 +200,9 @@ npm run package:portable
 **Docker 用户**（`deploy/` 方式）：
 
 ```bash
-cd noe-ssh   # 放 docker-compose.yml 与 .env 的目录
+cd noe-ssh   # 放 docker-compose.yml / .env / docker-start.sh 的目录
 docker compose pull
-docker compose up -d
+./docker-start.sh
 # .env 与 ./data 一般不用改
 ```
 
@@ -250,18 +252,21 @@ docker compose up -d
 ## X11 转发（ssh -X）
 
 1. 连接表单勾选「X11 转发」；需要完整信任时再勾选「信任 X11」（`-Y`）
-2. **运行 Noe-SSH 的机器**上需有可用显示器：`echo $DISPLAY` 非空（或设置 `NOE_SSH_X11_DISPLAY=:0`）
+2. **运行 Noe-SSH 的机器**需有图形会话（`echo $DISPLAY` 有值，或存在 `/tmp/.X11-unix/X0`）
 3. 远程 `/etc/ssh/sshd_config` 中 `X11Forwarding yes` 后重载 sshd
-4. 连接后终端内 `echo $DISPLAY` 应有值；再运行 GUI 程序（如配置向导）
+4. 连接后终端内 `echo $DISPLAY` 应有值；再运行 GUI 程序
 
-说明：X11 画面出现在 Noe-SSH **服务端本机**，不是浏览器标签页。Docker 部署需额外挂载 X11 socket，例如：
+说明：X11 画面出现在 Noe-SSH **服务端本机**，不是浏览器标签页。
 
-```yaml
-environment:
-  - NOE_SSH_X11_DISPLAY=:0
-volumes:
-  - /tmp/.X11-unix:/tmp/.X11-unix
+Docker 已默认挂载 `/tmp/.X11-unix`，并传入 `DISPLAY` / `NOE_SSH_X11_DISPLAY`（缺省 `:0`）。推荐用启动脚本（会自动探测显示器并执行 `xhost +local:`）：
+
+```bash
+./docker-start.sh          # 源码构建
+# 或 deploy 目录：
+./docker-start.sh
 ```
+
+无头服务器没有 DISPLAY 时会跳过 X11，不影响 Web SSH。仅在本机显示器不是 `:0` 且自动探测失败时，才在 `.env` 里设置 `NOE_SSH_X11_DISPLAY`。
 
 ## 注意事项
 

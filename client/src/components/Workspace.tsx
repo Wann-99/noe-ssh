@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
-import { FileCode2, Save, TerminalSquare, X } from 'lucide-react';
+import { FileCode2, Files, Plus, Save, Search, TerminalSquare, Trash2, X } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { languageLabelForPath } from '../lib/editorLanguage';
 import { TerminalView } from './TerminalView';
@@ -18,11 +18,14 @@ export function Workspace() {
   const sessions = useAppStore((state) => state.sessions);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const editors = useAppStore((state) => state.editors);
-  const showTerminal = useAppStore((state) => state.showTerminal);
   const setActiveEditor = useAppStore((state) => state.setActiveEditor);
   const setEditorContent = useAppStore((state) => state.setEditorContent);
   const saveEditor = useAppStore((state) => state.saveEditor);
   const closeEditor = useAppStore((state) => state.closeEditor);
+  const setActiveTerminal = useAppStore((state) => state.setActiveTerminal);
+  const openTerminal = useAppStore((state) => state.openTerminal);
+  const closeTerminal = useAppStore((state) => state.closeTerminal);
+  const toggleFilePanel = useAppStore((state) => state.toggleFilePanel);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [pendingClose, setPendingClose] = useState<string | null>(null);
 
@@ -34,7 +37,9 @@ export function Workspace() {
   const activeEditor = sessionEditors.find((editor) => editor.id === session?.activeEditorId)
     || sessionEditors[0];
   const editorVisible = session?.workspaceMode === 'editor' && Boolean(activeEditor);
-  const language = activeEditor ? languageLabelForPath(activeEditor.path) : 'Plain Text';
+  const language = activeEditor ? languageLabelForPath(activeEditor.path) : 'Plain';
+  const terminals = session?.terminals || [];
+  const activeTerminalId = session?.activeTerminalId;
 
   const requestClose = (id: string) => {
     if (!closeEditor(id)) setPendingClose(id);
@@ -43,16 +48,55 @@ export function Workspace() {
   return (
     <section className="workbench">
       <div className="workbench-tabs" role="tablist" aria-label="工作区">
+        {terminals.map((pane) => {
+          const active = !editorVisible && pane.id === activeTerminalId;
+          const label = terminals.length === 1 ? '终端' : pane.title;
+          return (
+            <div
+              key={pane.id}
+              className={`workbench-tab terminal-tab ${active ? 'active' : ''}`}
+              role="tab"
+              aria-selected={active}
+              tabIndex={0}
+              onClick={() => {
+                if (activeSessionId) setActiveTerminal(pane.id, activeSessionId);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  if (activeSessionId) setActiveTerminal(pane.id, activeSessionId);
+                }
+              }}
+            >
+              <TerminalSquare size={15} />
+              <span>{label}</span>
+              {terminals.length > 1 && (
+                <button
+                  type="button"
+                  className="tab-close-button"
+                  aria-label={`关闭 ${label}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (activeSessionId) closeTerminal(pane.id, activeSessionId);
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          );
+        })}
         <button
           type="button"
-          className={`workbench-tab terminal-tab ${!editorVisible ? 'active' : ''}`}
-          onClick={showTerminal}
-          role="tab"
-          aria-selected={!editorVisible}
+          className="workbench-tab-add"
+          title="新建终端"
+          aria-label="新建终端"
+          disabled={!session || session.status !== 'ready'}
+          onClick={() => openTerminal(activeSessionId || undefined)}
         >
-          <TerminalSquare size={15} />
-          终端
+          <Plus size={15} />
         </button>
+
         {sessionEditors.map((editor) => {
           const name = editor.path.split('/').pop() || editor.path;
           const active = editorVisible && activeEditor?.id === editor.id;
@@ -86,6 +130,38 @@ export function Workspace() {
             </div>
           );
         })}
+
+        {!editorVisible && (
+          <div className="workbench-tabs-actions">
+            <button
+              type="button"
+              className="icon-button"
+              title="搜索终端 (Ctrl+F)"
+              aria-label="搜索终端"
+              onClick={() => window.dispatchEvent(new Event('ssh-term-toggle-search'))}
+            >
+              <Search size={15} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              title="清屏"
+              aria-label="清屏"
+              onClick={() => window.dispatchEvent(new Event('ssh-term-clear'))}
+            >
+              <Trash2 size={15} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              title="切换文件面板"
+              aria-label="切换文件面板"
+              onClick={toggleFilePanel}
+            >
+              <Files size={15} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="workbench-surface">

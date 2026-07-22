@@ -3,7 +3,7 @@
 #   1. cp .env.example .env
 #   2. 编辑 .env：设置 NOE_SSH_ADMIN_PASSWORD（推荐账号模式）
 #      或仅设置 NOE_SSH_ACCESS_TOKEN（遗留单口令）
-#   3. docker compose up -d
+#   3. ./docker-start.sh   （推荐）或 docker compose up -d
 services:
   noe-ssh:
     image: ghcr.io/wann-99/noe-ssh:latest
@@ -17,6 +17,10 @@ services:
       - NOE_SSH_ADMIN_USER=${NOE_SSH_ADMIN_USER:-admin}
       - NOE_SSH_ADMIN_PASSWORD=${NOE_SSH_ADMIN_PASSWORD:?请在 .env 中设置 NOE_SSH_ADMIN_PASSWORD}
       - NOE_SSH_ACCESS_TOKEN=${NOE_SSH_ACCESS_TOKEN:-}
+      # X11: inherit host DISPLAY; default :0 when unset (desktop Linux).
+      - DISPLAY=${DISPLAY:-:0}
+      - NOE_SSH_X11_DISPLAY=${NOE_SSH_X11_DISPLAY:-${DISPLAY:-:0}}
     volumes:
       - ./data:/data
+      - /tmp/.X11-unix:/tmp/.X11-unix
     restart: unless-stopped

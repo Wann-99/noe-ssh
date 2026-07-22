@@ -1,16 +1,45 @@
-import { useEffect, useState } from 'react';
-import { Image, Keyboard, LockKeyhole, LogOut, Shield, ShieldCheck } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  ChevronDown,
+  ChevronRight,
+  Image,
+  Keyboard,
+  LockKeyhole,
+  LogOut,
+  Fullscreen,
+  Minimize2,
+  Settings,
+  Shield,
+  ShieldCheck,
+} from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { hasVault } from '../lib/crypto';
+
+type MenuSection = 'settings' | 'security' | null;
+
+function isDocumentFullscreen() {
+  return Boolean(document.fullscreenElement);
+}
+
+async function toggleDocumentFullscreen() {
+  if (isDocumentFullscreen()) {
+    await document.exitFullscreen();
+    return;
+  }
+  await document.documentElement.requestFullscreen();
+}
 
 export function Header({
   onOpenBg,
   onOpenShortcuts,
   onSetupVault,
+  onUnlockVault,
 }: {
   onOpenBg: () => void;
   onOpenShortcuts: () => void;
   onSetupVault: () => void;
+  onUnlockVault: () => void;
 }) {
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -22,6 +51,12 @@ export function Header({
   const setShowAdmin = useAppStore((s) => s.setShowAdmin);
   const sess = sessions.find((s) => s.id === activeSessionId);
   const [elapsed, setElapsed] = useState('');
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [menuSection, setMenuSection] = useState<MenuSection>(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
+  const [fullscreen, setFullscreen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const userBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (sess?.status !== 'ready' || !sess.startedAt) {
@@ -44,6 +79,55 @@ export function Header({
     return () => clearInterval(id);
   }, [sess?.status, sess?.startedAt]);
 
+  useEffect(() => {
+    const sync = () => setFullscreen(isDocumentFullscreen());
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!userMenuOpen || !userBtnRef.current) return;
+    const place = () => {
+      const rect = userBtnRef.current!.getBoundingClientRect();
+      setMenuPos({
+        top: rect.bottom + 6,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [userMenuOpen, menuSection]);
+
+  useEffect(() => {
+    if (!userMenuOpen) {
+      setMenuSection(null);
+      return;
+    }
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (userMenuRef.current?.contains(target) || userBtnRef.current?.contains(target)) return;
+      setUserMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setUserMenuOpen(false);
+    };
+    const raf = requestAnimationFrame(() => {
+      window.addEventListener('pointerdown', onPointer);
+    });
+    window.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [userMenuOpen]);
+
   const statusLabel = sess?.status === 'connecting'
     ? '连接中'
     : sess?.status === 'disconnecting'
@@ -54,10 +138,157 @@ export function Header({
           ? '连接异常'
           : '未连接';
 
+  const closeMenu = () => setUserMenuOpen(false);
+  const toggleSection = (section: Exclude<MenuSection, null>) => {
+    setMenuSection((cur) => (cur === section ? null : section));
+  };
+
+  const menu = userMenuOpen && createPortal(
+    <div
+      ref={userMenuRef}
+      className="header-user-dropdown"
+      role="menu"
+      style={{ top: menuPos.top, right: menuPos.right }}
+    >
+      {user && (
+        <div className="menu-user-card">
+          <span className="header-user-avatar menu-user-avatar" aria-hidden>
+            {user.username.slice(0, 1).toUpperCase()}
+          </span>
+          <div className="menu-user-meta">
+            <div className="menu-user-name">{user.username}</div>
+            <div className="menu-user-role">{user.role === 'admin' ? '管理员' : '用户'}</div>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        role="menuitem"
+        className="menu-group-toggle"
+        aria-expanded={menuSection === 'settings'}
+        onClick={() => toggleSection('settings')}
+      >
+        <Settings size={14} />
+        <span>设置</span>
+        {menuSection === 'settings' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      </button>
+      {menuSection === 'settings' && (
+        <div className="menu-sub">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              closeMenu();
+              onOpenShortcuts();
+            }}
+          >
+            <Keyboard size={14} />快捷键
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              closeMenu();
+              onOpenBg();
+            }}
+          >
+            <Image size={14} />背景
+          </button>
+        </div>
+      )}
+
+      <button
+        type="button"
+        role="menuitem"
+        className="menu-group-toggle"
+        aria-expanded={menuSection === 'security'}
+        onClick={() => toggleSection('security')}
+      >
+        <ShieldCheck size={14} />
+        <span>安全</span>
+        {menuSection === 'security' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      </button>
+      {menuSection === 'security' && (
+        <div className="menu-sub">
+          {!hasVault() && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                onSetupVault();
+              }}
+            >
+              <ShieldCheck size={14} />密码库
+            </button>
+          )}
+          {hasVault() && vaultUnlocked && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                lockVault();
+              }}
+            >
+              <LockKeyhole size={14} />锁定密码库
+            </button>
+          )}
+          {hasVault() && !vaultUnlocked && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                onUnlockVault();
+              }}
+            >
+              <LockKeyhole size={14} />解锁密码库
+            </button>
+          )}
+        </div>
+      )}
+
+      {user?.role === 'admin' && (
+        <>
+          <div className="menu-sep" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              closeMenu();
+              setShowAdmin(true);
+            }}
+          >
+            <Shield size={14} />管理后台
+          </button>
+        </>
+      )}
+      {authRequired && (
+        <>
+          <div className="menu-sep" />
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              closeMenu();
+              void logout();
+            }}
+          >
+            <LogOut size={14} />退出
+          </button>
+        </>
+      )}
+    </div>,
+    document.body,
+  );
+
   return (
     <header className="header">
       <div className="brand">
-        <span className="brand-mark" />
+        <img src="/logo.png" alt="" className="brand-mark" width={28} height={28} />
         <h1>Noe-SSH</h1>
       </div>
       <div className={`connection-pill status-${sess?.status || 'idle'}`} title={sess?.error || statusLabel}>
@@ -76,37 +307,38 @@ export function Header({
         </span>
       )}
       <div className="header-actions">
-        {user && (
-          <span className="header-user" title={user.role === 'admin' ? '管理员' : '用户'}>
-            {user.username}
-          </span>
-        )}
-        {user?.role === 'admin' && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdmin(true)}>
-            <Shield size={14} />管理后台
-          </button>
-        )}
-        {hasVault() && vaultUnlocked && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={lockVault} title="锁定保险库">
-            <LockKeyhole size={14} />锁定
-          </button>
-        )}
-        {!hasVault() && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onSetupVault}>
-            <ShieldCheck size={14} />保险库
-          </button>
-        )}
-        <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenShortcuts}>
-          <Keyboard size={14} />快捷键
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm header-icon-btn"
+          title={fullscreen ? '退出全屏' : '进入全屏'}
+          aria-label={fullscreen ? '退出全屏' : '进入全屏'}
+          onClick={() => {
+            void toggleDocumentFullscreen().catch(() => {
+              /* browser may deny fullscreen without gesture / policy */
+            });
+          }}
+        >
+          {fullscreen ? <Minimize2 size={16} /> : <Fullscreen size={16} />}
         </button>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBg}>
-          <Image size={14} />背景
-        </button>
-        {authRequired && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => logout()}>
-            <LogOut size={14} />退出
+
+        <div className="header-user-menu">
+          <button
+            ref={userBtnRef}
+            type="button"
+            className={`header-user header-user-avatar-only ${userMenuOpen ? 'open' : ''}`}
+            title={user ? user.username : '菜单'}
+            aria-label={user ? `用户 ${user.username}` : '菜单'}
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+            onClick={() => setUserMenuOpen((open) => !open)}
+          >
+            <span className="header-user-avatar" aria-hidden>
+              {user ? user.username.slice(0, 1).toUpperCase() : '设'}
+            </span>
+            <ChevronDown size={14} className="header-user-caret" aria-hidden />
           </button>
-        )}
+          {menu}
+        </div>
       </div>
     </header>
   );

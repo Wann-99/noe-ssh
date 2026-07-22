@@ -7,10 +7,14 @@
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/docker-compose.yml -o docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/.env.example -o .env
+curl -fsSL https://raw.githubusercontent.com/Wann-99/noe-ssh/main/deploy/docker-start.sh -o docker-start.sh
+chmod +x docker-start.sh
 
 # 编辑 .env，填写 NOE_SSH_ADMIN_PASSWORD（强密码）
-docker compose up -d
+./docker-start.sh
 ```
+
+`docker-start.sh` 会自动探测本机 `DISPLAY` 并放行本地 X11（有图形桌面时无需再改 compose）。无显示器的服务器可直接 `docker compose up -d`。
 
 浏览器打开 http://localhost:3000 ，用管理员账号登录。可在「管理后台」创建用户并查看审计。
 

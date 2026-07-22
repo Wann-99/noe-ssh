@@ -1,4 +1,4 @@
-import { MSG, UPLOAD_CHUNK_SIZE } from '@shared/protocol';
+import { DEFAULT_TERMINAL_ID, MSG, UPLOAD_CHUNK_SIZE } from '@shared/protocol';
 import {
   WS_BIN_KIND,
   WS_BUFFER_HIGH,
@@ -94,6 +94,7 @@ export class SshSocket {
             window.dispatchEvent(new CustomEvent('ssh-term-write', {
               detail: {
                 sessionId: frame.sessionId,
+                terminalId: frame.transferId || DEFAULT_TERMINAL_ID,
                 data: frame.payload,
               },
             }));

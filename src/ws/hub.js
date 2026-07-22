@@ -1,5 +1,9 @@
 const WebSocket = require('ws');
-const { MSG } = require('../../shared/protocol');
+const {
+  MSG,
+  DEFAULT_TERMINAL_ID,
+  MAX_TERMINALS_PER_SESSION,
+} = require('../../shared/protocol');
 const {
   WS_BIN_KIND,
   WS_BUFFER_HIGH,
@@ -85,8 +89,12 @@ function attachWsHub(server) {
 
     const getSession = (sessionId) => sessions.get(sessionId);
 
-    const flushTermOut = (sessionId) => {
-      const buf = termOutBuffers.get(sessionId);
+    const termOutKey = (sessionId, terminalId) => `${sessionId}\0${terminalId || DEFAULT_TERMINAL_ID}`;
+
+    const flushTermOut = (sessionId, terminalId) => {
+      const tid = terminalId || DEFAULT_TERMINAL_ID;
+      const key = termOutKey(sessionId, tid);
+      const buf = termOutBuffers.get(key);
       if (!buf || buf.chunks.length === 0) return;
       if (buf.timer) {
         clearTimeout(buf.timer);
@@ -95,33 +103,132 @@ function attachWsHub(server) {
       const payload = Buffer.concat(buf.chunks);
       buf.chunks = [];
       buf.bytes = 0;
-      sendBinary(ws, WS_BIN_KIND.TERM_OUT, sessionId, '', payload);
+      sendBinary(ws, WS_BIN_KIND.TERM_OUT, sessionId, tid, payload);
     };
 
-    const enqueueTermOut = (sessionId, chunk) => {
-      let buf = termOutBuffers.get(sessionId);
+    const enqueueTermOut = (sessionId, terminalId, chunk) => {
+      const tid = terminalId || DEFAULT_TERMINAL_ID;
+      const key = termOutKey(sessionId, tid);
+      let buf = termOutBuffers.get(key);
       if (!buf) {
         buf = { chunks: [], bytes: 0, timer: null };
-        termOutBuffers.set(sessionId, buf);
+        termOutBuffers.set(key, buf);
       }
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       buf.chunks.push(piece);
       buf.bytes += piece.length;
       if (buf.bytes >= TERM_COALESCE_BYTES) {
-        flushTermOut(sessionId);
+        flushTermOut(sessionId, tid);
         return;
       }
       if (!buf.timer) {
-        buf.timer = setTimeout(() => flushTermOut(sessionId), TERM_COALESCE_MS);
+        buf.timer = setTimeout(() => flushTermOut(sessionId, tid), TERM_COALESCE_MS);
       }
     };
 
-    const clearTermOut = (sessionId) => {
-      const buf = termOutBuffers.get(sessionId);
-      if (!buf) return;
-      if (buf.timer) clearTimeout(buf.timer);
-      termOutBuffers.delete(sessionId);
+    const clearTermOut = (sessionId, terminalId) => {
+      if (terminalId) {
+        const key = termOutKey(sessionId, terminalId);
+        const buf = termOutBuffers.get(key);
+        if (!buf) return;
+        if (buf.timer) clearTimeout(buf.timer);
+        termOutBuffers.delete(key);
+        return;
+      }
+      const prefix = `${sessionId}\0`;
+      for (const key of [...termOutBuffers.keys()]) {
+        if (!key.startsWith(prefix) && key !== sessionId) continue;
+        const buf = termOutBuffers.get(key);
+        if (buf?.timer) clearTimeout(buf.timer);
+        termOutBuffers.delete(key);
+      }
     };
+
+    const ensureShells = (sess) => {
+      if (!sess) return null;
+      if (!(sess.shells instanceof Map)) sess.shells = new Map();
+      // Migrate legacy single-stream sessions created before multi-shell support.
+      if (sess.stream && sess.shells.size === 0) {
+        sess.shells.set(DEFAULT_TERMINAL_ID, sess.stream);
+      }
+      return sess.shells;
+    };
+
+    const resolveShell = (sess, terminalId) => {
+      const shells = ensureShells(sess);
+      if (!shells) return null;
+      const tid = terminalId || DEFAULT_TERMINAL_ID;
+      // Never fall back to another shell — that routes keystrokes to the wrong terminal.
+      return shells.get(tid) || null;
+    };
+
+    const attachShellStream = (sess, sessionId, terminalId, stream) => {
+      sess.shells.set(terminalId, stream);
+      stream.on('data', (chunk) => {
+        enqueueTermOut(sessionId, terminalId, chunk);
+      });
+      stream.stderr.on('data', (chunk) => {
+        enqueueTermOut(sessionId, terminalId, chunk);
+      });
+      stream.on('close', () => {
+        if (sess.shells.get(terminalId) !== stream) return;
+        sess.shells.delete(terminalId);
+        flushTermOut(sessionId, terminalId);
+        clearTermOut(sessionId, terminalId);
+        if (!sess.destroying) {
+          send(ws, {
+            type: MSG.SHELL_CLOSED,
+            sessionId,
+            terminalId,
+            data: 'Shell closed',
+          });
+        }
+      });
+    };
+
+    const openShell = (sess, sessionId, terminalId, cols, rows, shellExtra = {}) => (
+      new Promise((resolve, reject) => {
+        if (!sess?.client) {
+          reject(new Error('Not connected'));
+          return;
+        }
+        const shells = ensureShells(sess);
+        if (shells.has(terminalId)) {
+          reject(new Error('Terminal already open'));
+          return;
+        }
+        if (shells.size >= MAX_TERMINALS_PER_SESSION) {
+          reject(new Error(`最多 ${MAX_TERMINALS_PER_SESSION} 个终端`));
+          return;
+        }
+        const shellOpts = {
+          term: 'xterm-256color',
+          cols: cols || 120,
+          rows: rows || 36,
+          ...shellExtra,
+        };
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('打开 shell 超时'));
+        }, 12_000);
+        sess.client.shell(shellOpts, (err, stream) => {
+          if (settled) {
+            try { stream?.close(); } catch (_) { /* ignore */ }
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          if (err) {
+            reject(err);
+            return;
+          }
+          attachShellStream(sess, sessionId, terminalId, stream);
+          resolve(stream);
+        });
+      })
+    );
 
     const emitUploadProgress = (sessionId, transfer, id, force = false) => {
       const now = Date.now();
@@ -183,7 +290,8 @@ function attachWsHub(server) {
       if (!sess || sess.destroying) return;
       sess.destroying = true;
       sessions.delete(sessionId);
-      flushTermOut(sessionId);
+      const shellIds = [...(sess.shells?.keys() || [])];
+      for (const tid of shellIds) flushTermOut(sessionId, tid);
       clearTermOut(sessionId);
       if (sess.connected) {
         record({
@@ -206,6 +314,12 @@ function attachWsHub(server) {
       }
       sess.downloads.clear();
       sftp.endSftp(sess);
+      if (sess.shells) {
+        for (const [, stream] of sess.shells) {
+          try { stream.close(); } catch (_) { /* ignore */ }
+        }
+        sess.shells.clear();
+      }
       try {
         if (sess.stream) sess.stream.close();
       } catch (_) { /* ignore */ }
@@ -222,7 +336,11 @@ function attachWsHub(server) {
       for (const id of [...sessions.keys()]) {
         destroySession(id, 'Connection closed');
       }
-      for (const id of [...termOutBuffers.keys()]) clearTermOut(id);
+      for (const key of [...termOutBuffers.keys()]) {
+        const buf = termOutBuffers.get(key);
+        if (buf?.timer) clearTimeout(buf.timer);
+        termOutBuffers.delete(key);
+      }
     };
 
     const handleBinaryMessage = async (raw) => {
@@ -295,15 +413,18 @@ function attachWsHub(server) {
 
         try {
           const { client, jumpClient } = await openSshConnection(msg);
+          const primaryTerminalId = String(msg.terminalId || DEFAULT_TERMINAL_ID).slice(0, 64);
           const sess = {
             client,
             jumpClient,
             stream: null,
+            shells: new Map(),
             sftp: null,
             _sftpPending: null,
             uploads: new Map(),
             downloads: new Map(),
             x11: false,
+            x11Option: null,
             destroying: false,
             connected: false,
             targetHost,
@@ -326,12 +447,7 @@ function attachWsHub(server) {
             }
           });
 
-          const shellOpts = {
-            term: 'xterm-256color',
-            cols: msg.cols || 120,
-            rows: msg.rows || 36,
-          };
-
+          const shellExtra = {};
           let x11Note = '';
           if (msg.x11Forward) {
             const x11 = attachX11Forwarding(client, {
@@ -339,8 +455,9 @@ function attachWsHub(server) {
               display: msg.x11Display || undefined,
             });
             if (x11.ok) {
-              shellOpts.x11 = x11.x11Option;
+              shellExtra.x11 = x11.x11Option;
               sess.x11 = true;
+              sess.x11Option = x11.x11Option;
               const ep = x11.endpoint;
               const where = ep.type === 'unix'
                 ? ep.path
@@ -352,32 +469,23 @@ function attachWsHub(server) {
             }
           }
 
-          // Open shell first, then one shared SFTP (avoid racing many channels).
-          await new Promise((resolve, reject) => {
-            client.shell(shellOpts, (err, stream) => {
-              if (err) {
-                reject(err);
-                return;
-              }
-              sess.stream = stream;
-              stream.on('data', (chunk) => {
-                enqueueTermOut(sessionId, chunk);
-              });
-              stream.stderr.on('data', (chunk) => {
-                enqueueTermOut(sessionId, chunk);
-              });
-              stream.on('close', () => {
-                destroySession(sessionId, 'Shell session closed');
-              });
-              resolve();
-            });
-          });
+          // Open primary shell first, then one shared SFTP (avoid racing many channels).
+          const primaryStream = await openShell(
+            sess,
+            sessionId,
+            primaryTerminalId,
+            msg.cols || 120,
+            msg.rows || 36,
+            shellExtra,
+          );
+          sess.stream = primaryStream;
 
           send(ws, {
             type: MSG.CONNECTED,
             sessionId,
+            terminalId: primaryTerminalId,
             data: 'SSH connection established',
-            x11: Boolean(shellOpts.x11),
+            x11: Boolean(shellExtra.x11),
           });
           sess.connected = true;
           record({
@@ -389,11 +497,17 @@ function attachWsHub(server) {
             targetPort,
             detail: {
               useJump: Boolean(msg.useJump || msg.jumpHost),
-              x11: Boolean(shellOpts.x11),
+              x11: Boolean(shellExtra.x11),
+              terminalId: primaryTerminalId,
             },
           });
           if (x11Note) {
-            send(ws, { type: MSG.DATA, sessionId, data: x11Note });
+            send(ws, {
+              type: MSG.DATA,
+              sessionId,
+              terminalId: primaryTerminalId,
+              data: x11Note,
+            });
           }
 
           try {
@@ -422,14 +536,79 @@ function attachWsHub(server) {
       const sess = getSession(sessionId);
 
       if (msg.type === MSG.INPUT) {
-        if (sess && sess.stream) sess.stream.write(msg.data);
+        const stream = resolveShell(sess, msg.terminalId);
+        if (stream) stream.write(msg.data);
         return;
       }
 
       if (msg.type === MSG.RESIZE) {
-        if (sess && sess.stream) {
-          sess.stream.setWindow(msg.rows, msg.cols, msg.height || 480, msg.width || 640);
+        const stream = resolveShell(sess, msg.terminalId);
+        if (stream) {
+          stream.setWindow(msg.rows, msg.cols, msg.height || 480, msg.width || 640);
         }
+        return;
+      }
+
+      if (msg.type === MSG.SHELL_OPEN || msg.type === 'shell-open') {
+        if (!sess || !sess.client) {
+          send(ws, {
+            type: MSG.ERROR,
+            sessionId,
+            terminalId: msg.terminalId,
+            data: 'Not connected',
+          });
+          return;
+        }
+        ensureShells(sess);
+        const terminalId = String(msg.terminalId || '').slice(0, 64);
+        if (!terminalId) {
+          send(ws, {
+            type: MSG.ERROR,
+            sessionId,
+            data: 'Missing terminalId',
+          });
+          return;
+        }
+        try {
+          // Inherit X11 / trusted forwarding from the SSH session for every new shell.
+          const shellExtra = (sess.x11 && sess.x11Option != null)
+            ? { x11: sess.x11Option }
+            : {};
+          await openShell(
+            sess,
+            sessionId,
+            terminalId,
+            msg.cols || 120,
+            msg.rows || 36,
+            shellExtra,
+          );
+          send(ws, {
+            type: MSG.SHELL_OPENED,
+            sessionId,
+            terminalId,
+            x11: Boolean(shellExtra.x11),
+          });
+        } catch (err) {
+          send(ws, {
+            type: MSG.ERROR,
+            sessionId,
+            terminalId,
+            data: err.message || String(err),
+          });
+        }
+        return;
+      }
+
+      if (msg.type === MSG.SHELL_CLOSE || msg.type === 'shell-close') {
+        if (!sess) return;
+        ensureShells(sess);
+        const terminalId = String(msg.terminalId || '').slice(0, 64);
+        const stream = terminalId ? sess.shells?.get(terminalId) : null;
+        if (!stream) return;
+        // Keep SSH session alive even if this is the last shell.
+        try {
+          stream.close();
+        } catch (_) { /* ignore */ }
         return;
       }
 
@@ -459,43 +638,47 @@ function attachWsHub(server) {
           send(ws, { type: MSG.SERVER_INFO_RESULT, sessionId, id: msg.id, error: 'Not connected' });
           return;
         }
+        // Emit KEY=value lines so the client can render a clean layout
+        // instead of dumping free/df tables into a narrow sidebar.
         const script = [
-          'echo "===HOST==="',
-          'hostname 2>/dev/null || uname -n',
-          'echo "===OS==="',
-          'uname -sr 2>/dev/null',
-          'echo "===UPTIME==="',
-          'uptime 2>/dev/null || cat /proc/uptime 2>/dev/null',
-          'echo "===CPU==="',
-          'nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo ?',
-          'echo "===MEM==="',
-          'free -h 2>/dev/null | awk \'NR==1||NR==2{print}\'',
-          'echo "===DISK==="',
-          'df -h / 2>/dev/null | tail -1',
-          'echo "===LOAD==="',
-          'cat /proc/loadavg 2>/dev/null || uptime 2>/dev/null',
+          'echo "HOST=$(hostname 2>/dev/null || uname -n)"',
+          'echo "OS=$(uname -sr 2>/dev/null)"',
+          'UP=$(uptime -p 2>/dev/null); if [ -z "$UP" ]; then UP=$(uptime 2>/dev/null | sed -n \'s/.*up \\([^,]*\\).*/up \\1/p\'); fi; echo "UPTIME=${UP:-—}"',
+          'echo "CPU=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo —)"',
+          'free -h 2>/dev/null | awk \'/^Mem:/{printf "MEM_TOTAL=%s\\nMEM_USED=%s\\nMEM_FREE=%s\\nMEM_SHARED=%s\\nMEM_CACHE=%s\\nMEM_AVAILABLE=%s\\n",$2,$3,$4,$5,$6,$7}\'',
+          'df -h / 2>/dev/null | awk \'NR==2{printf "DISK_FS=%s\\nDISK_SIZE=%s\\nDISK_USED=%s\\nDISK_AVAIL=%s\\nDISK_USE=%s\\nDISK_MOUNT=%s\\n",$1,$2,$3,$4,$5,$6}\'',
+          'awk \'{printf "LOAD_1=%s\\nLOAD_5=%s\\nLOAD_15=%s\\n",$1,$2,$3}\' /proc/loadavg 2>/dev/null',
         ].join('; ');
         try {
           const raw = await execCommand(sess.client, script);
-          const sections = {};
-          let current = null;
-          raw.split('\n').forEach((line) => {
-            const m = line.match(/^===(\w+)===$/);
-            if (m) {
-              current = m[1].toLowerCase();
-              sections[current] = [];
-              return;
-            }
-            if (current) sections[current].push(line);
+          const kv = {};
+          String(raw || '').split('\n').forEach((line) => {
+            const idx = line.indexOf('=');
+            if (idx <= 0) return;
+            const key = line.slice(0, idx).trim();
+            const value = line.slice(idx + 1).trim();
+            if (key) kv[key] = value;
           });
           const info = {
-            host: (sections.host || []).join('\n').trim(),
-            os: (sections.os || []).join('\n').trim(),
-            uptime: (sections.uptime || []).join('\n').trim(),
-            cpu: (sections.cpu || []).join('\n').trim(),
-            mem: (sections.mem || []).join('\n').trim(),
-            disk: (sections.disk || []).join('\n').trim(),
-            load: (sections.load || []).join('\n').trim(),
+            host: kv.HOST || '—',
+            os: kv.OS || '—',
+            uptime: kv.UPTIME || '—',
+            cpu: kv.CPU || '—',
+            memTotal: kv.MEM_TOTAL || '—',
+            memUsed: kv.MEM_USED || '—',
+            memFree: kv.MEM_FREE || '—',
+            memShared: kv.MEM_SHARED || '—',
+            memCache: kv.MEM_CACHE || '—',
+            memAvailable: kv.MEM_AVAILABLE || '—',
+            diskFs: kv.DISK_FS || '—',
+            diskSize: kv.DISK_SIZE || '—',
+            diskUsed: kv.DISK_USED || '—',
+            diskAvail: kv.DISK_AVAIL || '—',
+            diskUse: kv.DISK_USE || '—',
+            diskMount: kv.DISK_MOUNT || '—',
+            load1: kv.LOAD_1 || '—',
+            load5: kv.LOAD_5 || '—',
+            load15: kv.LOAD_15 || '—',
           };
           send(ws, { type: MSG.SERVER_INFO_RESULT, sessionId, id: msg.id, info });
         } catch (err) {

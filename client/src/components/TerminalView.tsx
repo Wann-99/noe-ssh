@@ -3,35 +3,40 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
-import { ChevronDown, ChevronUp, Files, Search, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  Search,
+  X,
+} from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
+import { DEFAULT_TERMINAL_ID } from '@shared/protocol';
 import { INACTIVE_PENDING_MAX } from '@shared/wsBinary';
 import { useAppStore } from '../store/appStore';
 
-/** Fixed fresh theme — translucent-friendly dark + teal accent */
+/** Glass workbench terminal theme — electric blue accent */
 const FRESH_THEME = {
-  background: 'rgba(8, 14, 20, 0.35)',
-  foreground: '#d4dde6',
-  cursor: '#3ecfbf',
-  cursorAccent: '#0a1014',
-  selectionBackground: 'rgba(62,207,191,0.28)',
+  background: 'rgba(12, 16, 24, 0.2)',
+  foreground: '#e8eef7',
+  cursor: '#60a5fa',
+  cursorAccent: '#0c1018',
+  selectionBackground: 'rgba(59,130,246,0.32)',
   black: '#0c1014',
-  red: '#f07178',
-  green: '#7fd99a',
-  yellow: '#e6c07b',
-  blue: '#61afef',
-  magenta: '#c678dd',
-  cyan: '#3ecfbf',
-  white: '#d4dde6',
-  brightBlack: '#5c6773',
-  brightRed: '#f07178',
-  brightGreen: '#7fd99a',
-  brightYellow: '#e6c07b',
-  brightBlue: '#61afef',
-  brightMagenta: '#c678dd',
-  brightCyan: '#56d4c4',
-  brightWhite: '#e7eef5',
+  red: '#f87171',
+  green: '#4ade80',
+  yellow: '#fbbf24',
+  blue: '#60a5fa',
+  magenta: '#c084fc',
+  cyan: '#67e8f9',
+  white: '#e8eef7',
+  brightBlack: '#6b778a',
+  brightRed: '#fca5a5',
+  brightGreen: '#86efac',
+  brightYellow: '#fde68a',
+  brightBlue: '#93c5fd',
+  brightMagenta: '#d8b4fe',
+  brightCyan: '#a5f3fc',
+  brightWhite: '#f8fafc',
 };
 
 type WriteChunk = string | Uint8Array;
@@ -43,41 +48,47 @@ type TerminalEntry = {
   disposables: Array<{ dispose: () => void }>;
 };
 
+function termKey(sessionId: string, terminalId: string) {
+  return `${sessionId}::${terminalId}`;
+}
+
 function chunkByteLength(chunk: WriteChunk) {
   return typeof chunk === 'string' ? chunk.length : chunk.byteLength;
 }
 
 export function TerminalView({ visible }: { visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const sessionHostsRef = useRef(new Map<string, HTMLDivElement>());
+  const termHostsRef = useRef(new Map<string, HTMLDivElement>());
   const entriesRef = useRef(new Map<string, TerminalEntry>());
   /** Pending writes when terminal not yet created. */
   const pendingCreatesRef = useRef(new Map<string, WriteChunk[]>());
-  /** Inactive-session ring buffer (approx last 64KB). */
+  /** Inactive-pane ring buffer (approx last 64KB). */
   const inactivePendingRef = useRef(new Map<string, { chunks: WriteChunk[]; bytes: number }>());
-  /** Active-session rAF write batch. */
+  /** Active-pane rAF write batch. */
   const writeBatchRef = useRef(new Map<string, WriteChunk[]>());
   const rafRef = useRef<number | null>(null);
-  const activeSessionIdRef = useRef<string | null>(null);
+  const activeKeyRef = useRef<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const termFontSize = useAppStore((s) => s.termFontSize);
   const setFontSize = useAppStore((s) => s.setFontSize);
-  const toggleFilePanel = useAppStore((s) => s.toggleFilePanel);
-  activeSessionIdRef.current = activeSessionId;
+  const activeSession = sessions.find((session) => session.id === activeSessionId);
+  const activeTerminalId = activeSession?.activeTerminalId || DEFAULT_TERMINAL_ID;
+  activeKeyRef.current = activeSessionId
+    ? termKey(activeSessionId, activeTerminalId)
+    : null;
 
   const flushBatch = useCallback(() => {
     rafRef.current = null;
-    for (const [sessionId, chunks] of writeBatchRef.current) {
+    for (const [key, chunks] of writeBatchRef.current) {
       if (!chunks.length) continue;
-      const entry = entriesRef.current.get(sessionId);
+      const entry = entriesRef.current.get(key);
       if (!entry) continue;
       if (chunks.length === 1) {
         entry.term.write(chunks[0]);
       } else {
-        // Prefer a single string write when all chunks are strings.
         let allString = true;
         for (const c of chunks) {
           if (typeof c !== 'string') {
@@ -100,11 +111,11 @@ export function TerminalView({ visible }: { visible: boolean }) {
     rafRef.current = requestAnimationFrame(flushBatch);
   }, [flushBatch]);
 
-  const pushInactive = useCallback((sessionId: string, data: WriteChunk) => {
-    let buf = inactivePendingRef.current.get(sessionId);
+  const pushInactive = useCallback((key: string, data: WriteChunk) => {
+    let buf = inactivePendingRef.current.get(key);
     if (!buf) {
       buf = { chunks: [], bytes: 0 };
-      inactivePendingRef.current.set(sessionId, buf);
+      inactivePendingRef.current.set(key, buf);
     }
     buf.chunks.push(data);
     buf.bytes += chunkByteLength(data);
@@ -114,53 +125,63 @@ export function TerminalView({ visible }: { visible: boolean }) {
     }
   }, []);
 
-  const enqueueWrite = useCallback((sessionId: string, data: WriteChunk) => {
-    const entry = entriesRef.current.get(sessionId);
+  const enqueueWrite = useCallback((sessionId: string, terminalId: string, data: WriteChunk) => {
+    const key = termKey(sessionId, terminalId || DEFAULT_TERMINAL_ID);
+    const entry = entriesRef.current.get(key);
     if (!entry) {
-      const pending = pendingCreatesRef.current.get(sessionId) || [];
+      const pending = pendingCreatesRef.current.get(key) || [];
       pending.push(data);
-      // Cap create-pending similarly
       let bytes = pending.reduce((n, c) => n + chunkByteLength(c), 0);
       while (bytes > INACTIVE_PENDING_MAX && pending.length > 1) {
         const dropped = pending.shift();
         if (dropped) bytes -= chunkByteLength(dropped);
       }
-      pendingCreatesRef.current.set(sessionId, pending);
+      pendingCreatesRef.current.set(key, pending);
       return;
     }
 
-    if (sessionId !== activeSessionIdRef.current) {
-      pushInactive(sessionId, data);
+    if (key !== activeKeyRef.current) {
+      pushInactive(key, data);
       return;
     }
 
-    const batch = writeBatchRef.current.get(sessionId) || [];
+    const batch = writeBatchRef.current.get(key) || [];
     batch.push(data);
-    writeBatchRef.current.set(sessionId, batch);
+    writeBatchRef.current.set(key, batch);
     scheduleFlush();
   }, [pushInactive, scheduleFlush]);
 
-  const fitSession = useCallback((sessionId: string) => {
-    const entry = entriesRef.current.get(sessionId);
-    const host = sessionHostsRef.current.get(sessionId);
+  const fitPane = useCallback((sessionId: string, terminalId: string) => {
+    const key = termKey(sessionId, terminalId);
+    const entry = entriesRef.current.get(key);
+    const host = termHostsRef.current.get(key);
     if (!entry || !host || !visible || host.clientWidth < 10 || host.clientHeight < 10) return;
     try {
       entry.fit.fit();
       const dims = entry.fit.proposeDimensions();
-      if (dims) useAppStore.getState().sendResize(dims.cols, dims.rows, sessionId);
+      if (dims) useAppStore.getState().sendResize(dims.cols, dims.rows, sessionId, terminalId);
     } catch {
       // The host can be between layout states during a splitter drag.
     }
   }, [visible]);
 
-  const createTerminal = useCallback((sessionId: string, host: HTMLDivElement) => {
-    if (entriesRef.current.has(sessionId)) return;
+  const createTerminal = useCallback((sessionId: string, terminalId: string, host: HTMLDivElement) => {
+    const key = termKey(sessionId, terminalId);
+    if (entriesRef.current.has(key)) return;
+    const termFont = [
+      '"Cascadia Code"',
+      'Consolas',
+      '"Sarasa Mono SC"',
+      '"Noto Sans Mono CJK SC"',
+      '"Microsoft YaHei"',
+      '"PingFang SC"',
+      'monospace',
+    ].join(', ');
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: useAppStore.getState().termFontSize,
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono')
-        || '"Cascadia Code", Consolas, monospace',
+      fontFamily: termFont,
       theme: FRESH_THEME,
       allowProposedApi: true,
       scrollback: 5_000,
@@ -173,67 +194,70 @@ export function TerminalView({ visible }: { visible: boolean }) {
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon());
     term.open(host);
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        try { webgl.dispose(); } catch { /* ignore */ }
-      });
-      term.loadAddon(webgl);
-    } catch {
-      // DOM renderer fallback
-    }
     const disposables = [
-      term.onData((data) => useAppStore.getState().sendInput(data, sessionId)),
+      term.onData((data) => useAppStore.getState().sendInput(data, sessionId, terminalId)),
     ];
-    entriesRef.current.set(sessionId, { term, fit, search, disposables });
-    term.writeln(`\x1b[90mNoe-SSH · 会话已就绪\x1b[0m`);
-    const pending = pendingCreatesRef.current.get(sessionId);
+    entriesRef.current.set(key, { term, fit, search, disposables });
+    term.writeln('\x1b[90m会话已就绪\x1b[0m');
+    const pending = pendingCreatesRef.current.get(key);
     if (pending?.length) {
       pending.forEach((data) => term.write(data));
-      pendingCreatesRef.current.delete(sessionId);
+      pendingCreatesRef.current.delete(key);
     }
   }, []);
 
+  const disposeEntry = useCallback((key: string) => {
+    const entry = entriesRef.current.get(key);
+    if (!entry) return;
+    entry.disposables.forEach((disposable) => disposable.dispose());
+    entry.term.dispose();
+    entriesRef.current.delete(key);
+    pendingCreatesRef.current.delete(key);
+    inactivePendingRef.current.delete(key);
+    writeBatchRef.current.delete(key);
+  }, []);
+
   useEffect(() => {
-    const liveIds = new Set(sessions.map((session) => session.id));
-    sessions.forEach((session) => {
-      const host = sessionHostsRef.current.get(session.id);
-      if (host) createTerminal(session.id, host);
-    });
-    for (const [id, entry] of entriesRef.current) {
-      if (liveIds.has(id)) continue;
-      entry.disposables.forEach((disposable) => disposable.dispose());
-      entry.term.dispose();
-      entriesRef.current.delete(id);
-      pendingCreatesRef.current.delete(id);
-      inactivePendingRef.current.delete(id);
-      writeBatchRef.current.delete(id);
+    const liveKeys = new Set<string>();
+    for (const session of sessions) {
+      for (const pane of session.terminals) {
+        const key = termKey(session.id, pane.id);
+        liveKeys.add(key);
+        const host = termHostsRef.current.get(key);
+        if (host) createTerminal(session.id, pane.id, host);
+      }
     }
-  }, [sessions, createTerminal]);
+    for (const key of [...entriesRef.current.keys()]) {
+      if (!liveKeys.has(key)) disposeEntry(key);
+    }
+  }, [sessions, createTerminal, disposeEntry]);
 
   useEffect(() => {
     const onWrite = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail as { sessionId: string; data: WriteChunk };
-      enqueueWrite(detail.sessionId, detail.data);
+      const detail = (ev as CustomEvent).detail as {
+        sessionId: string;
+        terminalId?: string;
+        data: WriteChunk;
+      };
+      enqueueWrite(detail.sessionId, detail.terminalId || DEFAULT_TERMINAL_ID, detail.data);
     };
     window.addEventListener('ssh-term-write', onWrite);
     return () => window.removeEventListener('ssh-term-write', onWrite);
   }, [enqueueWrite]);
 
-  // Flush inactive buffer when a session becomes active.
   useEffect(() => {
-    if (!activeSessionId) return;
-    const buf = inactivePendingRef.current.get(activeSessionId);
+    const key = activeKeyRef.current;
+    if (!key) return;
+    const buf = inactivePendingRef.current.get(key);
     if (buf?.chunks.length) {
-      const entry = entriesRef.current.get(activeSessionId);
+      const entry = entriesRef.current.get(key);
       if (entry) {
         for (const chunk of buf.chunks) entry.term.write(chunk);
       }
-      inactivePendingRef.current.delete(activeSessionId);
+      inactivePendingRef.current.delete(key);
     }
-    // Also flush any pending rAF batch immediately for responsiveness.
     flushBatch();
-  }, [activeSessionId, flushBatch]);
+  }, [activeSessionId, activeTerminalId, flushBatch]);
 
   useEffect(() => {
     if (!visible) return;
@@ -254,21 +278,36 @@ export function TerminalView({ visible }: { visible: boolean }) {
         e.preventDefault();
         document.querySelector('.main-stage')?.classList.toggle('fullscreen');
         setTimeout(() => {
-          const id = useAppStore.getState().activeSessionId;
-          if (id) fitSession(id);
+          const state = useAppStore.getState();
+          const sid = state.activeSessionId;
+          const sess = state.sessions.find((item) => item.id === sid);
+          if (sid && sess?.activeTerminalId) fitPane(sid, sess.activeTerminalId);
         }, 100);
       }
     };
+    const onToggleSearch = () => setSearchOpen((open) => !open);
+    const onClear = () => {
+      const key = activeKeyRef.current;
+      if (key) entriesRef.current.get(key)?.term.clear();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [visible, fitSession, setFontSize]);
+    window.addEventListener('ssh-term-toggle-search', onToggleSearch);
+    window.addEventListener('ssh-term-clear', onClear);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('ssh-term-toggle-search', onToggleSearch);
+      window.removeEventListener('ssh-term-clear', onClear);
+    };
+  }, [visible, fitPane, setFontSize]);
 
   useEffect(() => {
     const root = hostRef.current;
     if (!root) return;
     const fitActive = () => {
-      const id = useAppStore.getState().activeSessionId;
-      if (id) fitSession(id);
+      const state = useAppStore.getState();
+      const sid = state.activeSessionId;
+      const sess = state.sessions.find((item) => item.id === sid);
+      if (sid && sess?.activeTerminalId) fitPane(sid, sess.activeTerminalId);
     };
     const observer = new ResizeObserver(fitActive);
     observer.observe(root);
@@ -279,36 +318,52 @@ export function TerminalView({ visible }: { visible: boolean }) {
       window.removeEventListener('resize', fitActive);
       window.removeEventListener('ssh-layout-resize', fitActive);
     };
-  }, [fitSession]);
+  }, [fitPane]);
 
   useEffect(() => () => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-    for (const entry of entriesRef.current.values()) {
-      entry.disposables.forEach((disposable) => disposable.dispose());
-      entry.term.dispose();
-    }
-    entriesRef.current.clear();
-  }, []);
+    for (const key of [...entriesRef.current.keys()]) disposeEntry(key);
+  }, [disposeEntry]);
 
   useEffect(() => {
     for (const entry of entriesRef.current.values()) {
       entry.term.options.fontSize = termFontSize;
     }
-    if (activeSessionId) fitSession(activeSessionId);
-  }, [termFontSize, activeSessionId, fitSession]);
+    if (activeSessionId && activeTerminalId) fitPane(activeSessionId, activeTerminalId);
+  }, [termFontSize, activeSessionId, activeTerminalId, fitPane]);
 
   useEffect(() => {
-    if (activeSessionId && visible) {
-      requestAnimationFrame(() => {
-        fitSession(activeSessionId);
-        entriesRef.current.get(activeSessionId)?.term.focus();
-      });
-    }
-  }, [activeSessionId, visible, fitSession]);
+    if (!activeSessionId || !activeTerminalId || !visible) return;
+    const key = termKey(activeSessionId, activeTerminalId);
+    const activate = () => {
+      for (const [entryKey, entry] of entriesRef.current) {
+        if (entryKey !== key) {
+          try {
+            entry.term.blur();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      fitPane(activeSessionId, activeTerminalId);
+      entriesRef.current.get(key)?.term.focus();
+    };
+    // Wait for layout: newly added panes may still be settling after tab switch.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(activate);
+    });
+    const timer = window.setTimeout(activate, 40);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.clearTimeout(timer);
+    };
+  }, [activeSessionId, activeTerminalId, visible, fitPane]);
 
   const getActiveEntry = () => {
-    const id = useAppStore.getState().activeSessionId;
-    return id ? entriesRef.current.get(id) : null;
+    const key = activeKeyRef.current;
+    return key ? entriesRef.current.get(key) : null;
   };
   const runSearch = (direction: 'next' | 'previous') => {
     const activeEntry = getActiveEntry();
@@ -319,30 +374,6 @@ export function TerminalView({ visible }: { visible: boolean }) {
 
   return (
     <div className="terminal-wrap">
-      <div className="terminal-toolbar">
-        <div className="terminal-toolbar-label">SSH Terminal</div>
-        <div className="terminal-toolbar-actions">
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setSearchOpen((open) => !open)}
-            title="搜索终端 (Ctrl+F)"
-          >
-            <Search size={15} />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => getActiveEntry()?.term.clear()}
-            title="清屏"
-          >
-            <Trash2 size={15} />
-          </button>
-          <button type="button" className="icon-button" onClick={toggleFilePanel} title="切换文件面板">
-            <Files size={15} />
-          </button>
-        </div>
-      </div>
       {searchOpen && (
         <div className="terminal-search">
           <Search size={14} />
@@ -371,20 +402,30 @@ export function TerminalView({ visible }: { visible: boolean }) {
         </div>
       )}
       <div className="terminal-host" ref={hostRef}>
-        {sessions.map((session) => (
-          <div
-            key={session.id}
-            className={`terminal-session ${session.id === activeSessionId ? 'active' : ''}`}
-            ref={(node) => {
-              if (node) {
-                sessionHostsRef.current.set(session.id, node);
-                createTerminal(session.id, node);
-              } else {
-                sessionHostsRef.current.delete(session.id);
-              }
-            }}
-          />
-        ))}
+        {sessions.flatMap((session) =>
+          session.terminals.map((pane) => {
+            const key = termKey(session.id, pane.id);
+            const active = session.id === activeSessionId && pane.id === (session.activeTerminalId || DEFAULT_TERMINAL_ID);
+            return (
+              <div
+                key={key}
+                className={`terminal-session ${active ? 'active' : ''}`}
+                aria-hidden={!active}
+                onMouseDown={() => {
+                  if (active) entriesRef.current.get(key)?.term.focus();
+                }}
+                ref={(node) => {
+                  if (node) {
+                    termHostsRef.current.set(key, node);
+                    createTerminal(session.id, pane.id, node);
+                  } else {
+                    termHostsRef.current.delete(key);
+                  }
+                }}
+              />
+            );
+          }),
+        )}
       </div>
     </div>
   );

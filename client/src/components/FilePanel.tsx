@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowUp,
   Download,
@@ -124,10 +125,14 @@ export function FilePanel() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close();
     };
-    window.addEventListener('mousedown', close);
+    // Defer so the opening click/pointerdown does not immediately dismiss the menu.
+    const raf = requestAnimationFrame(() => {
+      window.addEventListener('pointerdown', close);
+    });
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mousedown', close);
+      cancelAnimationFrame(raf);
+      window.removeEventListener('pointerdown', close);
       window.removeEventListener('keydown', onKey);
     };
   }, [contextMenu]);
@@ -377,8 +382,10 @@ export function FilePanel() {
                     type="button"
                     className="icon-button"
                     aria-label={`打开 ${f.filename} 的操作菜单`}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
+                      setSelected(f.filename);
                       const rect = event.currentTarget.getBoundingClientRect();
                       setContextMenu({
                         x: Math.max(6, Math.min(rect.right - 180, window.innerWidth - 190)),
@@ -397,13 +404,20 @@ export function FilePanel() {
         )}
       </div>
 
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
           className="context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
-          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
         >
-          <button type="button" onClick={() => openFile(contextMenu.file)}>
+          <button
+            type="button"
+            onClick={() => {
+              const file = contextMenu.file;
+              setContextMenu(null);
+              openFile(file);
+            }}
+          >
             {contextMenu.file.isDir ? <Eye size={14} /> : <Pencil size={14} />}
             {contextMenu.file.isDir ? '打开' : '编辑'}
           </button>
@@ -425,7 +439,8 @@ export function FilePanel() {
           <button type="button" className="danger" onClick={() => openDialog('delete', contextMenu.file)}>
             <Trash2 size={14} />删除
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {dialog && (

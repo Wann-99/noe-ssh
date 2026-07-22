@@ -26,7 +26,6 @@ export default defineConfig({
             '@xterm/addon-fit',
             '@xterm/addon-search',
             '@xterm/addon-web-links',
-            '@xterm/addon-webgl',
           ],
           'icons-vendor': ['lucide-react'],
         },

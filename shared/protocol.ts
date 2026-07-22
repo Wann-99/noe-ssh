@@ -6,6 +6,8 @@ export const MSG = {
   INPUT: 'input',
   RESIZE: 'resize',
   DISCONNECT: 'disconnect',
+  SHELL_OPEN: 'shell-open',
+  SHELL_CLOSE: 'shell-close',
   EXEC: 'exec',
   SERVER_INFO: 'server-info',
   SFTP_LIST: 'sftp-list',
@@ -25,6 +27,8 @@ export const MSG = {
   AUTH_FAIL: 'auth-fail',
   CONNECTED: 'connected',
   DISCONNECTED: 'disconnected',
+  SHELL_OPENED: 'shell-opened',
+  SHELL_CLOSED: 'shell-closed',
   DATA: 'data',
   ERROR: 'error',
   HOME_DIR: 'home-dir',
@@ -44,6 +48,11 @@ export const MSG = {
   SFTP_DOWNLOAD_CHUNK: 'sftp-download-chunk',
   SFTP_DOWNLOAD_RESULT: 'sftp-download-result',
 } as const;
+
+/** Default shell id created with the SSH session. */
+export const DEFAULT_TERMINAL_ID = 't1';
+/** Soft limit of interactive shells per SSH session. */
+export const MAX_TERMINALS_PER_SESSION = 8;
 
 export const PREVIEW_MAX_BYTES = 1024 * 1024;
 /** Preferred transfer chunk size (binary WS frames). */
@@ -79,6 +88,8 @@ export type ConnectPayload = {
   x11Display?: string;
   cols?: number;
   rows?: number;
+  /** Primary interactive shell id (defaults to DEFAULT_TERMINAL_ID). */
+  terminalId?: string;
 };
 
 export type SavedConnection = {
