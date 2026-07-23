@@ -513,14 +513,9 @@ body.splitter-active * {
   border-color: rgba(62, 207, 191, 0.18);
 }
 .fp-icon { margin-right: 6px; }
-/* 文件名优先占满；仅在仍不足时从尾部省略 */
+/* 文件名列宽由 --fp-col-name 控制；截断由 JS 中间省略号处理 */
 .fp-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-family: var(--font-ui);
 }
 .fp-meta {
   flex: 0 0 auto;
@@ -529,7 +524,7 @@ body.splitter-active * {
   font-family: var(--font-mono);
   white-space: nowrap;
 }
-.fp-meta-size { min-width: 4.5em; text-align: right; }
+.fp-meta-size { min-width: 4.5em; text-align: left; }
 /* 操作按钮悬浮叠在右侧，不占布局宽度，避免拖窄时抢文件名空间 */
 .fp-actions {
   position: absolute;
@@ -2053,32 +2048,134 @@ body.splitter-active * {
   font-size: .76rem;
 }
 .fp-list {
+  --fp-col-name: 200px;
+  --fp-col-size: 68px;
+  --fp-col-time: 88px;
+  --fp-col-menu: 28px;
   position: relative;
   padding: 0;
   outline: none;
   scrollbar-gutter: stable;
+  overflow-x: hidden;
 }
+/* 三列宽度由 JS allocateColumns 写入 CSS 变量；禁止横向撑开。 */
 .fp-list-header, .fp-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 1fr) 64px 78px 28px;
+  position: relative;
+  display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* 右侧永久预留给三点菜单，列宽再拖也不会盖住/挤掉菜单 */
+  padding-right: calc(var(--fp-col-menu) + 6px);
 }
 .fp-list-header {
   position: sticky;
   z-index: 2;
   top: 0;
   height: 29px;
-  padding: 0 7px 0 10px;
+  padding-left: 10px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-panel);
   color: var(--text-faint);
   font-size: .65rem;
 }
+.fp-col-h {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+  text-align: center;
+}
+.fp-list-header .fp-col-name,
+.fp-row .fp-name {
+  flex: 0 0 var(--fp-col-name);
+  width: var(--fp-col-name);
+  min-width: var(--fp-col-name);
+  max-width: var(--fp-col-name);
+}
+.fp-list-header .fp-col-size,
+.fp-row .fp-meta-size {
+  flex: 0 0 var(--fp-col-size);
+  width: var(--fp-col-size);
+  min-width: var(--fp-col-size);
+  max-width: var(--fp-col-size);
+}
+.fp-list-header .fp-col-time,
+.fp-row .fp-meta-time {
+  flex: 0 0 var(--fp-col-time);
+  width: var(--fp-col-time);
+  min-width: var(--fp-col-time);
+  max-width: var(--fp-col-time);
+}
+/* 三点菜单脱离文档流，绝对钉在行右缘；拖列宽时位置不变 */
+.fp-list-header .fp-col-menu-h,
+.fp-row-menu {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--fp-col-menu);
+  min-width: var(--fp-col-menu);
+  max-width: var(--fp-col-menu);
+  margin: 0;
+  pointer-events: auto;
+}
+.fp-list-header .fp-col-menu-h {
+  pointer-events: none;
+}
+/* 剩余空间在时间列之后；菜单不占 flex 宽度 */
+.fp-col-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fp-col-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  z-index: 3;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.fp-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+.fp-col-h:hover .fp-col-resizer::after,
+.fp-col-resizer:hover::after,
+body.fp-col-resizing .fp-col-resizer:hover::after {
+  background: rgba(59, 130, 246, 0.7);
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.35);
+}
+body.fp-col-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.fp-col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 .fp-row {
   min-height: 34px;
-  margin: 1px 6px;
-  padding: 0 8px 0 10px;
+  margin: 1px 0;
+  padding-left: 10px;
   border: 0;
   border-bottom: 1px solid transparent;
   border-radius: 10px;
@@ -2095,20 +2192,52 @@ body.splitter-active * {
 .fp-name {
   display: flex;
   align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
   font-family: var(--font-ui);
   cursor: default;
   user-select: none;
 }
+.fp-name-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fp-icon {
   display: inline-flex;
+  flex: 0 0 auto;
   margin-right: 7px;
   color: #93c5fd;
 }
 .fp-row.is-dir .fp-icon { color: #fbbf24; }
-.fp-meta-size { min-width: 0; text-align: right; }
-.fp-meta-time { overflow: hidden; text-overflow: ellipsis; }
-.fp-row-menu { display: flex; justify-content: flex-end; opacity: 0; }
-.fp-row:hover .fp-row-menu, .fp-row.selected .fp-row-menu { opacity: 1; }
+.fp-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.fp-meta-size { text-align: left; }
+.fp-meta-time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.fp-row-menu {
+  opacity: 0;
+  /* 盖住可能溢出的列内容，避免按钮被挡住 */
+  background: linear-gradient(90deg, transparent, var(--surface-panel) 35%);
+}
+.fp-row:hover .fp-row-menu {
+  opacity: 1;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.04) 35%, rgba(255, 255, 255, 0.04));
+}
+.fp-row.selected .fp-row-menu {
+  opacity: 1;
+  background: linear-gradient(90deg, transparent, var(--accent-dim) 35%, var(--accent-dim));
+}
 .empty-state {
   min-height: 180px;
   padding: 28px 18px;
@@ -2392,8 +2521,15 @@ body.splitter-active * {
 .toast-copy span { color: var(--text-secondary); font-size: .72rem; line-height: 1.45; word-break: break-word; }
 
 @container filepanel (max-width: 330px) {
-  .fp-list-header, .fp-row { grid-template-columns: minmax(100px, 1fr) 54px 28px; }
-  .fp-meta-time, .fp-list-header span:nth-child(3) { display: none; }
+  .fp-list-header .fp-col-time,
+  .fp-meta-time { display: none; }
+  .fp-list-header .fp-col-name,
+  .fp-row .fp-name {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
   .fp-tools .btn { font-size: 0; gap: 0; }
   .fp-tools .btn svg { width: 15px; height: 15px; }
 }

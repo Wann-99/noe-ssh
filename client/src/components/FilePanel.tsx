@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowUp,
@@ -20,12 +20,36 @@ import {
 } from 'lucide-react';
 import type { RemoteFile } from '@shared/protocol';
 import { useAppStore } from '../store/appStore';
+import {
+  COL_GAP,
+  COL_MIN,
+  DEFAULT_COLS,
+  type PreferredCols,
+  allocateColumns,
+  clampRange,
+  loadColumnView,
+  maxExclusiveWidth,
+  measureLongestNameWidth,
+  saveColumnView,
+  viewStorageKey,
+} from '../lib/fileListColumns';
+
+type ColKey = 'name' | 'size' | 'time';
 
 function formatSize(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(1)} GB`;
+}
+
+/** year/mon/day，例如 2024/12/09 */
+function formatDateYmd(ms: number) {
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}/${m}/${day}`;
 }
 
 /** Collapse middle crumbs when path is deep: keep root, first, …, last 2 */
@@ -80,7 +104,16 @@ export function FilePanel() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: RemoteFile } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [panelW, setPanelW] = useState(360);
+  const [nameFont, setNameFont] = useState('13px sans-serif');
   const dragDepth = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const preferredRef = useRef<PreferredCols>({ ...DEFAULT_COLS });
+
+  const remotePath = sess?.remotePath || '/';
+  const colsKey = viewStorageKey(sess?.host, remotePath);
+  const [preferred, setPreferred] = useState<PreferredCols>(() => loadColumnView(colsKey));
+  preferredRef.current = preferred;
 
   const files = useMemo(() => {
     let list = [...(sess?.files || [])];
@@ -95,7 +128,105 @@ export function FilePanel() {
     return list;
   }, [sess?.files, filter, showHidden, sort]);
 
-  const remotePath = sess?.remotePath || '/';
+  const allocated = useMemo(
+    () => allocateColumns(panelW, preferred),
+    [panelW, preferred],
+  );
+
+  useEffect(() => {
+    setPreferred(loadColumnView(colsKey));
+  }, [colsKey]);
+
+  const persistPreferred = useCallback((cols: PreferredCols) => {
+    saveColumnView(colsKey, cols);
+  }, [colsKey]);
+
+  const onColResizeStart = useCallback((key: ColKey, event: React.PointerEvent<HTMLSpanElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const list = listRef.current;
+    if (!list) return;
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add('fp-col-resizing');
+    // Freeze sibling widths for the whole drag so other dividers stay put.
+    const frozen = { ...preferredRef.current };
+
+    const onMove = (ev: PointerEvent) => {
+      const header = list.querySelector('.fp-list-header') as HTMLElement | null;
+      const rect = (header ?? list).getBoundingClientRect();
+      const styles = header ? getComputedStyle(header) : null;
+      const padLeft = styles ? Number.parseFloat(styles.paddingLeft) || 0 : 0;
+      const contentW = header?.clientWidth ?? list.clientWidth;
+      const fromLeft = Math.max(0, ev.clientX - rect.left - padLeft);
+      if (contentW > 0) setPanelW(contentW);
+
+      setPreferred(() => {
+        // 只改当前列；其它列保持拖拽开始时的宽度
+        const next: PreferredCols = { ...frozen };
+        if (key === 'name') {
+          next.name = clampRange(
+            fromLeft,
+            COL_MIN.name,
+            maxExclusiveWidth(contentW, 'name', frozen),
+          );
+        } else if (key === 'size') {
+          // 大小列左缘 = name + gap
+          const size = fromLeft - frozen.name - COL_GAP;
+          next.size = clampRange(
+            size,
+            COL_MIN.size,
+            maxExclusiveWidth(contentW, 'size', frozen),
+          );
+        } else {
+          // 时间列左缘 = name + gap + size + gap
+          const time = fromLeft - frozen.name - COL_GAP - frozen.size - COL_GAP;
+          next.time = clampRange(
+            time,
+            COL_MIN.time,
+            maxExclusiveWidth(contentW, 'time', frozen),
+          );
+        }
+        preferredRef.current = next;
+        return next;
+      });
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      try {
+        handle.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* already released */
+      }
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      document.body.classList.remove('fp-col-resizing');
+      persistPreferred(preferredRef.current);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  }, [persistPreferred]);
+
+  const autosizeNameColumn = useCallback(() => {
+    const list = listRef.current;
+    const header = list?.querySelector('.fp-list-header') as HTMLElement | null;
+    const width = header?.clientWidth || list?.clientWidth || panelW;
+    const longest = measureLongestNameWidth(files.map((f) => f.filename), nameFont);
+    const next: PreferredCols = {
+      ...preferredRef.current,
+      name: clampRange(
+        longest,
+        COL_MIN.name,
+        maxExclusiveWidth(width, 'name', preferredRef.current),
+      ),
+    };
+    setPreferred(next);
+    preferredRef.current = next;
+    persistPreferred(next);
+  }, [files, nameFont, panelW, persistPreferred]);
+
   const crumbs = remotePath.split('/').filter(Boolean);
   const atRoot = crumbs.length === 0;
   const crumbItems = visibleCrumbs(crumbs);
@@ -113,6 +244,27 @@ export function FilePanel() {
   const progress = sess?.transferProgress;
   const connected = sess?.status === 'ready';
   const ready = connected && sess?.sftpStatus === 'ready';
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+
+    const measure = () => {
+      const header = list.querySelector('.fp-list-header') as HTMLElement | null;
+      const sample = list.querySelector('.fp-name') as HTMLElement | null;
+      const width = header?.clientWidth || list.clientWidth;
+      if (width > 0) setPanelW(width);
+      if (sample) {
+        const cs = getComputedStyle(sample);
+        setNameFont(`${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`);
+      }
+    };
+
+    measure();
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(list);
+    return () => ro.disconnect();
+  }, [files.length, connected]);
 
   useEffect(() => {
     setSelected(null);
@@ -284,8 +436,14 @@ export function FilePanel() {
         </div>
       )}
       <div
+        ref={listRef}
         className="fp-list"
         tabIndex={0}
+        style={{
+          ['--fp-col-name' as string]: `${allocated.name}px`,
+          ['--fp-col-size' as string]: `${allocated.size}px`,
+          ['--fp-col-time' as string]: `${allocated.time}px`,
+        }}
         onKeyDown={(event) => {
           const file = files.find((item) => item.filename === selected);
           if (!file) return;
@@ -350,7 +508,46 @@ export function FilePanel() {
         ) : (
           <>
             <div className="fp-list-header">
-              <span>名称</span><span>大小</span><span>修改时间</span><span />
+              <span className="fp-col-h fp-col-name">
+                名称
+                <span
+                  className="fp-col-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整名称列宽"
+                  title="拖动调整名称列（其它列不动）；双击按最长文件名自适应"
+                  onPointerDown={(e) => onColResizeStart('name', e)}
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    autosizeNameColumn();
+                  }}
+                />
+              </span>
+              <span className="fp-col-h fp-col-size">
+                大小
+                <span
+                  className="fp-col-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整大小列宽"
+                  title="拖动：只调整大小列"
+                  onPointerDown={(e) => onColResizeStart('size', e)}
+                />
+              </span>
+              <span className="fp-col-h fp-col-time">
+                修改时间
+                <span
+                  className="fp-col-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整时间列宽"
+                  title="拖动：调整时间列"
+                  onPointerDown={(e) => onColResizeStart('time', e)}
+                />
+              </span>
+              <span className="fp-col-spacer" aria-hidden />
+              <span className="fp-col-menu-h" aria-hidden />
             </div>
             {files.map((f) => {
             return (
@@ -369,14 +566,25 @@ export function FilePanel() {
                   });
                 }}
               >
-                <span className="fp-name" title={f.filename}>
+                <span
+                  className="fp-name"
+                  onMouseEnter={(event) => {
+                    const text = event.currentTarget.querySelector('.fp-name-text') as HTMLElement | null;
+                    if (text && text.scrollWidth > text.clientWidth + 1) {
+                      event.currentTarget.title = f.filename;
+                    } else {
+                      event.currentTarget.removeAttribute('title');
+                    }
+                  }}
+                >
                   <span className="fp-icon" aria-hidden>{fileIcon(f)}</span>
-                  {f.filename}
+                  <span className="fp-name-text">{f.filename}</span>
                 </span>
                 <span className="fp-meta fp-meta-size">{f.isDir ? '—' : formatSize(f.size)}</span>
                 <span className="fp-meta fp-meta-time" title={`${new Date(f.mtime).toLocaleString()} · ${f.perm}`}>
-                  {new Date(f.mtime).toLocaleDateString()}
+                  {formatDateYmd(f.mtime)}
                 </span>
+                <span className="fp-col-spacer" aria-hidden />
                 <div className="fp-row-menu">
                   <button
                     type="button"
