@@ -104,8 +104,9 @@ export function DetachedEditor() {
         fillWindow
         onFocus={() => api.editor.send({ type: 'focus', id: editorId })}
         onMinimize={() => {
+          // Prefer OS minimize → main-process hide; keep window for restore.
           api.editor.send({ type: 'minimize', id: editorId });
-          void api.editor.destroy({ id: editorId });
+          void api.editor.hide({ id: editorId });
         }}
         onClose={() => {
           if (editor.dirty) {

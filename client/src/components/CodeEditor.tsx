@@ -1,4 +1,5 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, Replace, Search, X } from 'lucide-react';
 import { EditorState, StateEffect, type Extension } from '@codemirror/state';
 import {
   crosshairCursor,
@@ -28,10 +29,14 @@ import {
   indentWithTab,
 } from '@codemirror/commands';
 import {
+  findNext,
+  findPrevious,
   highlightSelectionMatches,
-  openSearchPanel,
+  replaceAll,
+  replaceNext,
   search,
-  searchKeymap,
+  SearchQuery,
+  setSearchQuery,
 } from '@codemirror/search';
 import {
   autocompletion,
@@ -133,40 +138,7 @@ const editorTheme = EditorView.theme({
     border: '1px solid rgba(255,255,255,.12)',
     color: '#e8eefc',
   },
-  '.cm-panels': {
-    backgroundColor: '#1a2230',
-    color: '#e8eefc',
-    borderBottom: '1px solid rgba(255,255,255,.1)',
-  },
-  '.cm-panels.cm-panels-top': { borderBottom: '1px solid rgba(255,255,255,.1)' },
-  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid rgba(255,255,255,.1)' },
-  '.cm-panel.cm-search': {
-    padding: '8px 10px',
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '6px',
-    alignItems: 'center',
-  },
-  '.cm-panel.cm-search input': {
-    background: '#0f141d',
-    border: '1px solid rgba(255,255,255,.14)',
-    borderRadius: '6px',
-    color: '#e8eefc',
-    padding: '4px 8px',
-    outline: 'none',
-    minWidth: '160px',
-  },
-  '.cm-panel.cm-search input:focus': { borderColor: '#82aaff' },
-  '.cm-panel.cm-search button': {
-    background: '#243044',
-    border: '1px solid rgba(255,255,255,.12)',
-    borderRadius: '6px',
-    color: '#e8eefc',
-    padding: '3px 8px',
-    cursor: 'pointer',
-  },
-  '.cm-panel.cm-search button:hover': { background: '#2d3c55' },
-  '.cm-panel.cm-search label': { color: '#a8b4c8', fontSize: '12px' },
+  '.cm-panels': { display: 'none' },
   '.cm-searchMatch': { backgroundColor: 'rgba(255, 203, 107, .35)' },
   '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(130, 170, 255, .4)' },
 }, { dark: true });
@@ -188,23 +160,56 @@ export const CodeEditor = forwardRef<CodeEditorHandle, {
   onCursorChange,
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onCursorRef = useRef(onCursorChange);
+  const openSearchRef = useRef<() => void>(() => undefined);
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
   onCursorRef.current = onCursorChange;
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [matchCase, setMatchCase] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [useRegexp, setUseRegexp] = useState(false);
+  const [showReplace, setShowReplace] = useState(false);
+
+  const applyQuery = (searchValue = findText, replaceValue = replaceText) => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: setSearchQuery.of(new SearchQuery({
+        search: searchValue,
+        replace: replaceValue,
+        caseSensitive: matchCase,
+        regexp: useRegexp,
+        wholeWord,
+      })),
+    });
+  };
+
+  openSearchRef.current = () => {
+    setSearchOpen(true);
+    window.setTimeout(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    }, 0);
+  };
+
   useImperativeHandle(ref, () => ({
-    openSearch: () => {
-      const view = viewRef.current;
-      if (!view) return;
-      openSearchPanel(view);
-      view.focus();
-    },
+    openSearch: () => openSearchRef.current(),
     focus: () => viewRef.current?.focus(),
   }), []);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    applyQuery();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOpen, matchCase, wholeWord, useRegexp]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -213,6 +218,23 @@ export const CodeEditor = forwardRef<CodeEditorHandle, {
       preventDefault: true,
       run: () => {
         onSaveRef.current();
+        return true;
+      },
+    };
+    const findKeymap = {
+      key: 'Mod-f',
+      preventDefault: true,
+      run: () => {
+        openSearchRef.current();
+        return true;
+      },
+    };
+    const replaceKeymap = {
+      key: 'Mod-h',
+      preventDefault: true,
+      run: () => {
+        setShowReplace(true);
+        openSearchRef.current();
         return true;
       },
     };
@@ -240,10 +262,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, {
         EditorView.lineWrapping,
         keymap.of([
           saveKeymap,
+          findKeymap,
+          replaceKeymap,
           indentWithTab,
           ...closeBracketsKeymap,
           ...defaultKeymap,
-          ...searchKeymap,
           ...historyKeymap,
           ...completionKeymap,
         ]),
@@ -272,5 +295,145 @@ export const CodeEditor = forwardRef<CodeEditorHandle, {
     };
   }, [editor.id, editor.path]);
 
-  return <div className="code-editor-host" ref={hostRef} />;
+  const runFind = (direction: 'next' | 'previous') => {
+    const view = viewRef.current;
+    if (!view || !findText) return;
+    applyQuery();
+    if (direction === 'next') findNext(view);
+    else findPrevious(view);
+  };
+
+  return (
+    <div className="code-editor-shell">
+      {searchOpen && (
+        <div className="editor-search" role="search">
+          <div className="editor-search-row">
+            <Search size={14} className="editor-search-icon" aria-hidden />
+            <input
+              ref={findInputRef}
+              className="editor-search-input"
+              value={findText}
+              placeholder="查找"
+              onChange={(event) => {
+                const value = event.target.value;
+                setFindText(value);
+                applyQuery(value, replaceText);
+                if (value) {
+                  const view = viewRef.current;
+                  if (view) findNext(view);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  runFind(event.shiftKey ? 'previous' : 'next');
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setSearchOpen(false);
+                  viewRef.current?.focus();
+                }
+              }}
+            />
+            <button type="button" className="icon-button" title="上一个" aria-label="上一个" onClick={() => runFind('previous')}>
+              <ChevronUp size={14} />
+            </button>
+            <button type="button" className="icon-button" title="下一个" aria-label="下一个" onClick={() => runFind('next')}>
+              <ChevronDown size={14} />
+            </button>
+            <label className="editor-search-check">
+              <input type="checkbox" checked={matchCase} onChange={(e) => setMatchCase(e.target.checked)} />
+              <span>大小写</span>
+            </label>
+            <label className="editor-search-check">
+              <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} />
+              <span>整词</span>
+            </label>
+            <label className="editor-search-check">
+              <input type="checkbox" checked={useRegexp} onChange={(e) => setUseRegexp(e.target.checked)} />
+              <span>正则</span>
+            </label>
+            <button
+              type="button"
+              className={`icon-button ${showReplace ? 'is-active' : ''}`}
+              title="替换"
+              aria-label="切换替换"
+              aria-pressed={showReplace}
+              onClick={() => setShowReplace((open) => !open)}
+            >
+              <Replace size={14} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              title="关闭"
+              aria-label="关闭搜索"
+              onClick={() => {
+                setSearchOpen(false);
+                viewRef.current?.focus();
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+          {showReplace && (
+            <div className="editor-search-row">
+              <span className="editor-search-icon editor-search-icon-spacer" aria-hidden />
+              <input
+                className="editor-search-input"
+                value={replaceText}
+                placeholder="替换为"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setReplaceText(value);
+                  applyQuery(findText, value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    const view = viewRef.current;
+                    if (!view || !findText) return;
+                    applyQuery();
+                    replaceNext(view);
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setSearchOpen(false);
+                    viewRef.current?.focus();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={!findText}
+                onClick={() => {
+                  const view = viewRef.current;
+                  if (!view || !findText) return;
+                  applyQuery();
+                  replaceNext(view);
+                }}
+              >
+                替换
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={!findText}
+                onClick={() => {
+                  const view = viewRef.current;
+                  if (!view || !findText) return;
+                  applyQuery();
+                  replaceAll(view);
+                }}
+              >
+                全部替换
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="code-editor-host" ref={hostRef} />
+    </div>
+  );
 });

@@ -1982,37 +1982,106 @@ body.splitter-active * {
   /* Keep in DOM (no remount) so restore does not flash. */
 }
 .editor-float.is-absorbing {
-  animation: editor-float-absorb 0.32s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation: editor-float-absorb 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   pointer-events: none;
+  will-change: transform, opacity;
 }
 .editor-float.is-restoring {
-  animation: editor-float-restore 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation: editor-float-restore 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   pointer-events: none;
   visibility: visible;
+  will-change: transform, opacity;
 }
 @keyframes editor-float-in {
   from { opacity: 0.85; transform: translate(72px, 56px) scale(0.98); }
-  to { opacity: 1; }
+  to { opacity: 1; transform: translate(72px, 56px) scale(1); }
 }
 @keyframes editor-float-absorb {
   from {
     opacity: 1;
-    transform: translate(var(--float-x, 0px), var(--float-y, 0px)) scale(1);
+    transform: translate3d(var(--float-x, 0px), var(--float-y, 0px), 0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translate(var(--absorb-x, 0px), var(--absorb-y, 0px)) scale(0.12);
+    transform: translate3d(var(--absorb-x, 0px), var(--absorb-y, 0px), 0) scale(0.08);
   }
 }
 @keyframes editor-float-restore {
   from {
     opacity: 0;
-    transform: translate(var(--absorb-x, 0px), var(--absorb-y, 0px)) scale(0.12);
+    transform: translate3d(var(--absorb-x, 0px), var(--absorb-y, 0px), 0) scale(0.08);
   }
   to {
     opacity: 1;
-    transform: translate(var(--float-x, 0px), var(--float-y, 0px)) scale(1);
+    transform: translate3d(var(--float-x, 0px), var(--float-y, 0px), 0) scale(1);
   }
+}
+.code-editor-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0f141d;
+}
+.editor-search {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #1a2230;
+}
+.editor-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.editor-search-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.editor-search-icon-spacer {
+  width: 14px;
+}
+.editor-search-input {
+  flex: 1 1 180px;
+  min-width: 120px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: #0f141d;
+  color: var(--text);
+  font-size: 0.8rem;
+  outline: none;
+}
+.editor-search-input:focus {
+  border-color: rgba(130, 170, 255, 0.65);
+}
+.editor-search-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.72rem;
+  user-select: none;
+  white-space: nowrap;
+}
+.editor-search-check input {
+  margin: 0;
+  accent-color: #82aaff;
+}
+.editor-search .icon-button.is-active {
+  color: #93c5fd;
+  background: rgba(130, 170, 255, 0.14);
+}
+.editor-search .btn-sm {
+  height: 30px;
+  padding: 0 10px;
+  flex: 0 0 auto;
 }
 .editor-float-titlebar {
   flex: 0 0 40px;
@@ -2059,6 +2128,7 @@ body.splitter-active * {
   flex-direction: column;
   background: #0f141d;
 }
+.editor-float-body .code-editor-shell,
 .editor-float-body .code-editor-host,
 .editor-float-body .editor-loading {
   flex: 1;

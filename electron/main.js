@@ -3,7 +3,6 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const { setupAutoUpdater, checkForUpdatesManual } = require('./updater');
-const { setupEditorWindows, closeAllEditorWindows } = require('./editorWindows');
 
 const HOST = '127.0.0.1';
 let listenPort = Number(process.env.PORT) || 3000;
@@ -202,7 +201,6 @@ function buildAppMenu() {
 
 function quitApp() {
   isQuitting = true;
-  closeAllEditorWindows();
   stopServer();
   try {
     if (tray) {
@@ -274,10 +272,6 @@ app.whenReady().then(async () => {
       setQuitting: () => { isQuitting = true; },
       getMainWindow: () => mainWindow,
     });
-    setupEditorWindows({
-      getMainWindow: () => mainWindow,
-      getBaseUrl: () => `http://${HOST}:${listenPort}`,
-    });
   } catch (err) {
     console.error(err);
     dialog.showErrorBox(
@@ -297,7 +291,8 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  // Keep process for tray on Linux/Windows; macOS uses activate.
+  // Subscribing prevents Electron's default quit-on-last-window.
+  // Main window may be hidden to tray; editor children can close freely.
   // Explicit「退出」goes through quitApp() → app.exit(0).
 });
 

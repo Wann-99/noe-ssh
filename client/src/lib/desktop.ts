@@ -47,6 +47,7 @@ export type NoeDesktopApi = {
     }) => Promise<{ ok: boolean; reused?: boolean }>;
     push: (payload: { id: string; state: DesktopEditorState }) => Promise<{ ok: boolean }>;
     focus: (payload: { id: string }) => Promise<{ ok: boolean }>;
+    hide: (payload: { id: string }) => Promise<{ ok: boolean }>;
     destroy: (payload: { id: string }) => Promise<{ ok: boolean }>;
     send: (payload: DesktopEditorChildMessage) => void;
     onFromChild: (handler: (payload: DesktopEditorChildMessage) => void) => () => void;

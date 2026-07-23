@@ -27,6 +27,77 @@ function sendToEditor(editorId, channel, payload) {
   }
 }
 
+function showMainWindow() {
+  const main = typeof getMainWindow === 'function' ? getMainWindow() : null;
+  if (!main || main.isDestroyed()) return;
+  try {
+    if (main.isMinimized()) main.restore();
+    main.show();
+    main.focus();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Hide editor into archive tray. Must NOT destroy the BrowserWindow —
+ * destroy/restore inside minimize has crashed the whole Electron process
+ * (main window + tray) on Linux.
+ */
+function hideEditorWindow(id, { notify = true } = {}) {
+  const win = windows.get(id);
+  if (!win || win.isDestroyed()) {
+    windows.delete(id);
+    return false;
+  }
+
+  try {
+    // Only hide — do not restore()/destroy() in the minimize path.
+    // That combination has crashed the whole Electron process on Linux
+    // (main window + tray icon disappear together).
+    win.setSkipTaskbar(true);
+    win.hide();
+  } catch {
+    /* ignore */
+  }
+
+  if (notify) {
+    sendToMain('editor:from-child', { type: 'minimize', id });
+  }
+  showMainWindow();
+  return true;
+}
+
+function showEditorWindow(id) {
+  const win = windows.get(id);
+  if (!win || win.isDestroyed()) {
+    windows.delete(id);
+    return false;
+  }
+  try {
+    if (win.isMinimized()) win.restore();
+    win.setSkipTaskbar(false);
+    win.show();
+    win.focus();
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function destroyEditorWindow(id) {
+  const win = windows.get(id);
+  windows.delete(id);
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.removeAllListeners('close');
+    win.removeAllListeners('minimize');
+    win.destroy();
+  } catch {
+    /* ignore */
+  }
+}
+
 function setupEditorWindows(options = {}) {
   if (typeof options.getMainWindow === 'function') getMainWindow = options.getMainWindow;
   if (typeof options.getBaseUrl === 'function') getBaseUrl = options.getBaseUrl;
@@ -42,9 +113,7 @@ function bindIpc() {
     if (!id) return { ok: false };
     const existing = windows.get(id);
     if (existing && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore();
-      existing.show();
-      existing.focus();
+      showEditorWindow(id);
       if (payload.state) sendToEditor(id, 'editor:state', payload.state);
       return { ok: true, reused: true };
     }
@@ -78,26 +147,15 @@ function bindIpc() {
       sendToMain('editor:from-child', { type: 'focus', id });
     });
 
-    // System minimize → stash into main-window archive tray (not taskbar).
+    // System minimize → hide + stash (never destroy here).
     win.on('minimize', () => {
-      try {
-        if (!win.isDestroyed()) win.restore();
-      } catch {
-        /* ignore */
-      }
-      sendToMain('editor:from-child', { type: 'minimize', id });
-      windows.delete(id);
-      try {
-        win.removeAllListeners('close');
-        win.removeAllListeners('minimize');
-        if (!win.isDestroyed()) win.destroy();
-      } catch {
-        /* ignore */
-      }
+      setImmediate(() => {
+        if (!windows.has(id)) return;
+        hideEditorWindow(id, { notify: true });
+      });
     });
 
     win.on('close', (event) => {
-      // Ask renderer to confirm (dirty files); it will call editor:destroy.
       event.preventDefault();
       sendToEditor(id, 'editor:request-close', {});
     });
@@ -125,25 +183,18 @@ function bindIpc() {
 
   ipcMain.handle('editor:focus', async (_event, payload = {}) => {
     const id = String(payload.id || '');
-    const win = windows.get(id);
-    if (!win || win.isDestroyed()) return { ok: false };
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-    return { ok: true };
+    return { ok: showEditorWindow(id) };
+  });
+
+  ipcMain.handle('editor:hide', async (_event, payload = {}) => {
+    const id = String(payload.id || '');
+    // Host-driven hide after store minimize — don't re-notify (avoids loop).
+    return { ok: hideEditorWindow(id, { notify: false }) };
   });
 
   ipcMain.handle('editor:destroy', async (_event, payload = {}) => {
     const id = String(payload.id || '');
-    const win = windows.get(id);
-    if (!win || win.isDestroyed()) {
-      windows.delete(id);
-      return { ok: true };
-    }
-    windows.delete(id);
-    win.removeAllListeners('close');
-    win.removeAllListeners('minimize');
-    win.destroy();
+    destroyEditorWindow(id);
     return { ok: true };
   });
 
@@ -153,15 +204,8 @@ function bindIpc() {
 }
 
 function closeAllEditorWindows() {
-  for (const [id, win] of windows) {
-    try {
-      win.removeAllListeners('close');
-      win.removeAllListeners('minimize');
-      if (!win.isDestroyed()) win.destroy();
-    } catch {
-      /* ignore */
-    }
-    windows.delete(id);
+  for (const id of [...windows.keys()]) {
+    destroyEditorWindow(id);
   }
 }
 

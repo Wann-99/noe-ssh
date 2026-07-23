@@ -149,14 +149,16 @@ export function EditorFloat({
         stashed ? 'is-stashed' : '',
         !openedOnce.current && !stashed && !animating ? 'is-entering' : '',
       ].filter(Boolean).join(' ')}
-      style={fillWindow || animating || stashed
-        ? { zIndex: editor.zIndex }
-        : {
-            zIndex: 2000 + editor.zIndex,
-            width: size.w,
-            height: size.h,
-            transform: `translate(${pos.x}px, ${pos.y}px)`,
-          }}
+      style={{
+        zIndex: 2000 + editor.zIndex,
+        // Keep size during absorb/restore — dropping width/height made the
+        // window snap to content size before the scale animation ran.
+        width: fillWindow ? undefined : size.w,
+        height: fillWindow ? undefined : size.h,
+        ...(animating || stashed || fillWindow
+          ? {}
+          : { transform: `translate(${pos.x}px, ${pos.y}px)` }),
+      }}
       aria-hidden={stashed}
       onMouseDown={stashed || animating ? undefined : onFocus}
     >

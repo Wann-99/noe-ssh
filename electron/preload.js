@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('noeDesktop', {
     open: (payload) => ipcRenderer.invoke('editor:open', payload),
     push: (payload) => ipcRenderer.invoke('editor:push', payload),
     focus: (payload) => ipcRenderer.invoke('editor:focus', payload),
+    hide: (payload) => ipcRenderer.invoke('editor:hide', payload),
     destroy: (payload) => ipcRenderer.invoke('editor:destroy', payload),
     send: (payload) => ipcRenderer.send('editor:from-child', payload),
     onFromChild: (handler) => {

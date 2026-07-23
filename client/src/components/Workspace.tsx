@@ -4,7 +4,6 @@ import { Archive, FileCode2, Files, Plus, Search, TerminalSquare, Trash2, X } fr
 import { useAppStore } from '../store/appStore';
 import { EditorFloat } from './EditorFloat';
 import { TerminalView } from './TerminalView';
-import { isDesktopEditorHost, useDesktopEditorWindows } from '../hooks/useDesktopEditorWindows';
 
 export function Workspace() {
   const sessions = useAppStore((state) => state.sessions);
@@ -82,21 +81,11 @@ export function Workspace() {
     return () => document.removeEventListener('click', onDoc);
   }, [stashOpen]);
 
-  const desktopHost = isDesktopEditorHost();
-
   const requestClose = useCallback((id: string) => {
     if (!closeEditor(id)) setPendingClose(id);
   }, [closeEditor]);
 
-  useDesktopEditorWindows({ onRequestClose: requestClose });
-
   const runMinimize = (id: string, _origin: DOMRect) => {
-    if (desktopHost) {
-      minimizeEditor(id);
-      stashBtnRef.current?.classList.add('is-pulse');
-      window.setTimeout(() => stashBtnRef.current?.classList.remove('is-pulse'), 420);
-      return;
-    }
     const btn = stashBtnRef.current?.getBoundingClientRect();
     if (btn) {
       setAbsorbTarget({ x: btn.left + btn.width / 2, y: btn.top + btn.height / 2 });
@@ -112,13 +101,6 @@ export function Workspace() {
   };
 
   const runRestore = (id: string) => {
-    if (desktopHost) {
-      restoreEditor(id);
-      setStashOpen(false);
-      stashBtnRef.current?.classList.add('is-pulse');
-      window.setTimeout(() => stashBtnRef.current?.classList.remove('is-pulse'), 420);
-      return;
-    }
     const btn = stashBtnRef.current?.getBoundingClientRect();
     if (btn) {
       setAbsorbTarget({ x: btn.left + btn.width / 2, y: btn.top + btn.height / 2 });
@@ -286,25 +268,23 @@ export function Workspace() {
           <TerminalView visible />
         </div>
 
-        {!desktopHost && (
-          <div className="editor-float-layer" aria-live="polite">
-            {floatEditors.map((editor, index) => (
-              <EditorFloat
-                key={editor.id}
-                editor={editor}
-                offset={index}
-                absorbing={absorbingId === editor.id}
-                restoring={restoringId === editor.id}
-                absorbTarget={absorbTarget}
-                onFocus={() => focusEditor(editor.id)}
-                onMinimize={(rect) => runMinimize(editor.id, rect)}
-                onClose={() => requestClose(editor.id)}
-                onChange={(content) => setEditorContent(editor.id, content)}
-                onSave={() => saveEditor(editor.id)}
-              />
-            ))}
-          </div>
-        )}
+        <div className="editor-float-layer" aria-live="polite">
+          {floatEditors.map((editor, index) => (
+            <EditorFloat
+              key={editor.id}
+              editor={editor}
+              offset={index}
+              absorbing={absorbingId === editor.id}
+              restoring={restoringId === editor.id}
+              absorbTarget={absorbTarget}
+              onFocus={() => focusEditor(editor.id)}
+              onMinimize={(rect) => runMinimize(editor.id, rect)}
+              onClose={() => requestClose(editor.id)}
+              onChange={(content) => setEditorContent(editor.id, content)}
+              onSave={() => saveEditor(editor.id)}
+            />
+          ))}
+        </div>
       </div>
 
       {pendingClose && (
