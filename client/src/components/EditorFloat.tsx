@@ -217,39 +217,30 @@ export function EditorFloat({
             {editor.saving ? '保存中…' : '保存'}
           </button>
           {!fillWindow && (
-            <button
-              type="button"
-              className="icon-button"
-              title="最小化到收纳"
-              aria-label="最小化到收纳"
-              onClick={() => {
-                const rect = shellRef.current?.getBoundingClientRect();
-                if (rect) onMinimize(rect);
-              }}
-            >
-              <Minus size={15} />
-            </button>
+            <>
+              <button
+                type="button"
+                className="icon-button"
+                title="最小化到收纳"
+                aria-label="最小化到收纳"
+                onClick={() => {
+                  const rect = shellRef.current?.getBoundingClientRect();
+                  if (rect) onMinimize(rect);
+                }}
+              >
+                <Minus size={15} />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                title="关闭"
+                aria-label="关闭"
+                onClick={onClose}
+              >
+                <X size={15} />
+              </button>
+            </>
           )}
-          {fillWindow && (
-            <button
-              type="button"
-              className="icon-button"
-              title="最小化到收纳"
-              aria-label="最小化到收纳"
-              onClick={() => onMinimize(new DOMRect())}
-            >
-              <Minus size={15} />
-            </button>
-          )}
-          <button
-            type="button"
-            className="icon-button"
-            title="关闭"
-            aria-label="关闭"
-            onClick={onClose}
-          >
-            <X size={15} />
-          </button>
         </div>
       </div>
       <div className="editor-float-path" title={editor.path}>{editor.path}</div>

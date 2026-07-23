@@ -78,6 +78,24 @@ function bindIpc() {
       sendToMain('editor:from-child', { type: 'focus', id });
     });
 
+    // System minimize → stash into main-window archive tray (not taskbar).
+    win.on('minimize', () => {
+      try {
+        if (!win.isDestroyed()) win.restore();
+      } catch {
+        /* ignore */
+      }
+      sendToMain('editor:from-child', { type: 'minimize', id });
+      windows.delete(id);
+      try {
+        win.removeAllListeners('close');
+        win.removeAllListeners('minimize');
+        if (!win.isDestroyed()) win.destroy();
+      } catch {
+        /* ignore */
+      }
+    });
+
     win.on('close', (event) => {
       // Ask renderer to confirm (dirty files); it will call editor:destroy.
       event.preventDefault();
@@ -124,6 +142,7 @@ function bindIpc() {
     }
     windows.delete(id);
     win.removeAllListeners('close');
+    win.removeAllListeners('minimize');
     win.destroy();
     return { ok: true };
   });
@@ -137,6 +156,7 @@ function closeAllEditorWindows() {
   for (const [id, win] of windows) {
     try {
       win.removeAllListeners('close');
+      win.removeAllListeners('minimize');
       if (!win.isDestroyed()) win.destroy();
     } catch {
       /* ignore */
