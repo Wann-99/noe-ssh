@@ -39,6 +39,7 @@ jobs:
           export npm_config_python="$(python -c 'import sys; print(sys.executable)')"
           export PYTHON="$npm_config_python"
           npm --prefix client run build
+          node scripts/prepare-icons.mjs
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
           node scripts/prepare-node-runtime.mjs
@@ -88,6 +89,7 @@ jobs:
       - name: Prepare build assets
         run: |
           npm --prefix client run build
+          node scripts/prepare-icons.mjs
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
           node scripts/prepare-node-runtime.mjs
@@ -130,6 +132,7 @@ jobs:
       - name: Prepare build assets
         run: |
           npm --prefix client run build
+          node scripts/prepare-icons.mjs
           node scripts/prepare-vendor.mjs
           node scripts/prepare-app-bundle.mjs
           node scripts/prepare-node-runtime.mjs

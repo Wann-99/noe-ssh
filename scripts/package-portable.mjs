@@ -24,15 +24,83 @@ function copyRecursive(src, dest) {
   }
 }
 
+function copyBrandIcons(bundleDir) {
+  const iconsDir = path.join(root, 'electron', 'icons');
+  const png = path.join(iconsDir, 'icon.png');
+  const ico = path.join(iconsDir, 'icon.ico');
+  if (fs.existsSync(png)) fs.copyFileSync(png, path.join(bundleDir, 'Noe-SSH.png'));
+  if (fs.existsSync(ico)) fs.copyFileSync(ico, path.join(bundleDir, 'Noe-SSH.ico'));
+}
+
 function createStartScript(bundleDir) {
   const isWin = process.platform === 'win32';
   if (isWin) {
-    const bat = `@echo off\r\nset NOE_SSH_MODE=portable\r\nset NOE_SSH_OPEN_BROWSER=1\r\nset HOST=127.0.0.1\r\nset PORT=3000\r\ncd /d "%~dp0"\r\nstart "" "http://localhost:3000"\r\nruntime\\node.exe app\\src\\index.js\r\n`;
+    const bat = [
+      '@echo off',
+      'set NOE_SSH_MODE=portable',
+      'set NOE_SSH_OPEN_BROWSER=1',
+      'set HOST=127.0.0.1',
+      'set PORT=3000',
+      'cd /d "%~dp0"',
+      'start "" "http://localhost:3000"',
+      'runtime\\node.exe app\\src\\index.js',
+      '',
+    ].join('\r\n');
     fs.writeFileSync(path.join(bundleDir, 'Noe-SSH.bat'), bat);
+
+    // .bat itself cannot carry a custom icon; ship a one-click shortcut installer.
+    const shortcutBat = [
+      '@echo off',
+      'cd /d "%~dp0"',
+      'powershell -NoProfile -ExecutionPolicy Bypass -Command ^',
+      '  "$dir = (Resolve-Path \'.\').Path; ^',
+      '   $desk = [Environment]::GetFolderPath(\'Desktop\'); ^',
+      '   $ws = New-Object -ComObject WScript.Shell; ^',
+      '   $sc = $ws.CreateShortcut((Join-Path $desk \'Noe-SSH.lnk\')); ^',
+      '   $sc.TargetPath = (Join-Path $dir \'Noe-SSH.bat\'); ^',
+      '   $sc.WorkingDirectory = $dir; ^',
+      '   $sc.IconLocation = (Join-Path $dir \'Noe-SSH.ico\'); ^',
+      '   $sc.Description = \'Noe-SSH\'; ^',
+      '   $sc.Save(); ^',
+      '   Write-Host \'Desktop shortcut created: Noe-SSH.lnk\'"',
+      'echo.',
+      'echo Desktop shortcut created with Noe-SSH logo.',
+      'pause',
+      '',
+    ].join('\r\n');
+    fs.writeFileSync(path.join(bundleDir, 'Create Desktop Shortcut.bat'), shortcutBat);
   } else {
-    const sh = `#!/bin/bash\nset -e\ncd "$(dirname "$0")"\nexport NOE_SSH_MODE=portable\nexport NOE_SSH_OPEN_BROWSER=1\nexport HOST=127.0.0.1\nexport PORT=3000\n(sleep 1 && (command -v open >/dev/null && open "http://localhost:3000" || xdg-open "http://localhost:3000" 2>/dev/null || true)) &\n./runtime/node app/src/index.js\n`;
-    const scriptPath = path.join(bundleDir, 'noe-ssh.sh');
-    fs.writeFileSync(scriptPath, sh, { mode: 0o755 });
+    const sh = `#!/bin/bash
+set -e
+cd "$(dirname "$0")"
+export NOE_SSH_MODE=portable
+export NOE_SSH_OPEN_BROWSER=1
+export HOST=127.0.0.1
+export PORT=3000
+(sleep 1 && (command -v open >/dev/null && open "http://localhost:3000" || xdg-open "http://localhost:3000" 2>/dev/null || true)) &
+./runtime/node app/src/index.js
+`;
+    fs.writeFileSync(path.join(bundleDir, 'noe-ssh.sh'), sh, { mode: 0o755 });
+
+    const installDesktop = `#!/bin/bash
+set -e
+DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="\${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$APP_DIR"
+cat > "$APP_DIR/noe-ssh-portable.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Noe-SSH
+Comment=SSH Visual Interface
+Exec="$DIR/noe-ssh.sh"
+Icon=$DIR/Noe-SSH.png
+Terminal=false
+Categories=Network;Development;
+EOF
+chmod +x "$APP_DIR/noe-ssh-portable.desktop"
+echo "Desktop entry installed: $APP_DIR/noe-ssh-portable.desktop"
+`;
+    fs.writeFileSync(path.join(bundleDir, 'install-desktop-entry.sh'), installDesktop, { mode: 0o755 });
   }
 }
 
@@ -63,6 +131,7 @@ async function main() {
   copyRecursive(path.join(root, 'build', 'app'), path.join(bundleDir, 'app'));
   fs.mkdirSync(path.join(bundleDir, 'runtime'), { recursive: true });
   fs.copyFileSync(nodePath, path.join(bundleDir, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'));
+  copyBrandIcons(bundleDir);
   createStartScript(bundleDir);
 
   const outDir = path.join(root, 'dist', 'portable');

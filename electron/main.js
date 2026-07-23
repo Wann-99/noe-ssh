@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
@@ -254,6 +254,16 @@ app.whenReady().then(async () => {
     });
   } catch (err) {
     console.error(err);
+    dialog.showErrorBox(
+      'Noe-SSH 启动失败',
+      `${err && err.message ? err.message : String(err)}\n\n`
+        + `可在终端运行查看详情：\n`
+        + `/opt/Noe-SSH/noe-ssh\n\n`
+        + `若提示 chrome-sandbox，可执行：\n`
+        + `sudo chown root:root /opt/Noe-SSH/chrome-sandbox\n`
+        + `sudo chmod 4755 /opt/Noe-SSH/chrome-sandbox\n`
+        + `或：/opt/Noe-SSH/noe-ssh --no-sandbox`,
+    );
     app.quit();
   }
 });
