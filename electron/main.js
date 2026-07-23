@@ -174,29 +174,44 @@ function createWindow() {
 }
 
 function buildAppMenu() {
-  // Windows / Linux: hide the File / Help menubar entirely.
-  if (process.platform !== 'darwin') {
-    Menu.setApplicationMenu(null);
+  // Edit roles are required for clipboard accelerators (Ctrl/Cmd+C/V) in Electron.
+  // Without this menu, desktop terminals and inputs cannot copy/paste.
+  const editMenu = {
+    label: '编辑',
+    submenu: [
+      { role: 'undo', label: '撤销' },
+      { role: 'redo', label: '重做' },
+      { type: 'separator' },
+      { role: 'cut', label: '剪切' },
+      { role: 'copy', label: '复制' },
+      { role: 'paste', label: '粘贴' },
+      { role: 'selectAll', label: '全选' },
+    ],
+  };
+
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          {
+            label: '检查更新…',
+            click: () => { checkForUpdatesManual(); },
+          },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
+      editMenu,
+    ]));
     return;
   }
 
-  // macOS keeps the system app menu; update check opens the in-page window.
-  const template = [
-    {
-      label: app.name,
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        {
-          label: '检查更新…',
-          click: () => { checkForUpdatesManual(); },
-        },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  // Windows / Linux: keep File/Help gone; Edit stays for accelerators.
+  // autoHideMenuBar hides it until Alt is pressed.
+  Menu.setApplicationMenu(Menu.buildFromTemplate([editMenu]));
 }
 
 function quitApp() {

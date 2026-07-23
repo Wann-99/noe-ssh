@@ -2313,6 +2313,37 @@ body.splitter-active * {
   scrollbar-gutter: stable;
   background: transparent !important;
 }
+.term-context-menu {
+  position: fixed;
+  z-index: 4000;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised, #1a2230);
+  box-shadow: var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.term-context-menu button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text, #e8eefc);
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.term-context-menu button:hover:not(:disabled) {
+  background: rgba(130, 170, 255, 0.14);
+}
+.term-context-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .terminal-search {
   position: absolute;
   z-index: 8;

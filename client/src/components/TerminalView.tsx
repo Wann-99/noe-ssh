@@ -187,6 +187,7 @@ export function TerminalView({ visible }: { visible: boolean }) {
       scrollback: 5_000,
       smoothScrollDuration: 0,
       minimumContrastRatio: 4.5,
+      rightClickSelectsWord: true,
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -194,8 +195,82 @@ export function TerminalView({ visible }: { visible: boolean }) {
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon());
     term.open(host);
+
+    const copySelection = () => {
+      const text = term.getSelection();
+      if (!text) return false;
+      void navigator.clipboard.writeText(text).catch(() => undefined);
+      return true;
+    };
+    const pasteClipboard = () => {
+      void navigator.clipboard.readText()
+        .then((text) => {
+          if (text) useAppStore.getState().sendInput(text, sessionId, terminalId);
+        })
+        .catch(() => undefined);
+      return true;
+    };
+
+    // Terminal conventions: Ctrl/Cmd+Shift+C/V (Ctrl+C is still SIGINT).
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== 'keydown') return true;
+      const mod = ev.ctrlKey || ev.metaKey;
+      if (!mod || !ev.shiftKey) return true;
+      const key = ev.key.toLowerCase();
+      if (key === 'c') {
+        if (copySelection()) {
+          ev.preventDefault();
+          return false;
+        }
+        return true;
+      }
+      if (key === 'v') {
+        ev.preventDefault();
+        pasteClipboard();
+        return false;
+      }
+      return true;
+    });
+
+    const onContextMenu = (ev: MouseEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const existing = host.querySelector('.term-context-menu');
+      existing?.remove();
+      const menu = document.createElement('div');
+      menu.className = 'term-context-menu';
+      menu.style.left = `${ev.clientX}px`;
+      menu.style.top = `${ev.clientY}px`;
+      const mkBtn = (label: string, action: () => void, disabled = false) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.disabled = disabled;
+        btn.onclick = () => {
+          action();
+          menu.remove();
+        };
+        menu.appendChild(btn);
+      };
+      mkBtn('复制', () => { copySelection(); }, !term.hasSelection());
+      mkBtn('粘贴', () => { pasteClipboard(); });
+      document.body.appendChild(menu);
+      const close = () => {
+        menu.remove();
+        window.removeEventListener('click', close, true);
+        window.removeEventListener('blur', close);
+      };
+      window.setTimeout(() => {
+        window.addEventListener('click', close, true);
+        window.addEventListener('blur', close);
+      }, 0);
+    };
+    host.addEventListener('contextmenu', onContextMenu);
+
     const disposables = [
       term.onData((data) => useAppStore.getState().sendInput(data, sessionId, terminalId)),
+      { dispose: () => host.removeEventListener('contextmenu', onContextMenu) },
+      { dispose: () => host.querySelector('.term-context-menu')?.remove() },
     ];
     entriesRef.current.set(key, { term, fit, search, disposables });
     term.writeln('\x1b[90m会话已就绪\x1b[0m');
