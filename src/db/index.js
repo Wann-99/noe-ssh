@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { hashPassword } = require('./password');
@@ -17,6 +18,19 @@ function envFirst(...keys) {
 function dataDir() {
   const configured = envFirst('NOE_SSH_DATA_DIR', 'SUPER_SSH_DATA_DIR');
   if (configured) return path.resolve(configured);
+
+  // Desktop/AppImage/.deb install trees under /opt are not user-writable.
+  const mode = envFirst('NOE_SSH_MODE', 'SUPER_SSH_MODE');
+  if (mode === 'desktop' || mode === 'portable') {
+    const base = process.env.XDG_DATA_HOME
+      || (process.platform === 'win32'
+        ? path.join(os.homedir(), 'AppData', 'Roaming')
+        : process.platform === 'darwin'
+          ? path.join(os.homedir(), 'Library', 'Application Support')
+          : path.join(os.homedir(), '.local', 'share'));
+    return path.join(base, 'noe-ssh');
+  }
+
   return path.resolve(process.cwd(), 'data');
 }
 
