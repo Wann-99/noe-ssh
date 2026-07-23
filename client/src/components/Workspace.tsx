@@ -1,18 +1,9 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
-import { FileCode2, Files, Plus, Save, Search, TerminalSquare, Trash2, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Archive, FileCode2, Files, Plus, Search, TerminalSquare, Trash2, X } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
-import { languageLabelForPath } from '../lib/editorLanguage';
+import { EditorFloat } from './EditorFloat';
 import { TerminalView } from './TerminalView';
-
-const CodeEditor = lazy(() => import('./CodeEditor').then((module) => ({
-  default: module.CodeEditor,
-})));
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 export function Workspace() {
   const sessions = useAppStore((state) => state.sessions);
@@ -22,34 +13,114 @@ export function Workspace() {
   const setEditorContent = useAppStore((state) => state.setEditorContent);
   const saveEditor = useAppStore((state) => state.saveEditor);
   const closeEditor = useAppStore((state) => state.closeEditor);
+  const minimizeEditor = useAppStore((state) => state.minimizeEditor);
+  const restoreEditor = useAppStore((state) => state.restoreEditor);
+  const focusEditor = useAppStore((state) => state.focusEditor);
   const setActiveTerminal = useAppStore((state) => state.setActiveTerminal);
   const openTerminal = useAppStore((state) => state.openTerminal);
   const closeTerminal = useAppStore((state) => state.closeTerminal);
   const toggleFilePanel = useAppStore((state) => state.toggleFilePanel);
-  const [cursor, setCursor] = useState({ line: 1, column: 1 });
+
   const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const [stashOpen, setStashOpen] = useState(false);
+  const [absorbingId, setAbsorbingId] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [absorbTarget, setAbsorbTarget] = useState<{ x: number; y: number } | null>(null);
+  const [stashPos, setStashPos] = useState<{ top: number; right: number } | null>(null);
+  const stashBtnRef = useRef<HTMLButtonElement>(null);
+  const stashPanelRef = useRef<HTMLDivElement>(null);
 
   const session = sessions.find((item) => item.id === activeSessionId);
   const sessionEditors = useMemo(
     () => editors.filter((editor) => editor.sessionId === activeSessionId),
     [editors, activeSessionId],
   );
-  const activeEditor = sessionEditors.find((editor) => editor.id === session?.activeEditorId)
-    || sessionEditors[0];
-  const editorVisible = session?.workspaceMode === 'editor' && Boolean(activeEditor);
-  const language = activeEditor ? languageLabelForPath(activeEditor.path) : 'Plain';
+  /** Keep floats mounted while stashed to avoid remount flash on restore. */
+  const floatEditors = useMemo(
+    () => [...sessionEditors].sort((a, b) => a.zIndex - b.zIndex),
+    [sessionEditors],
+  );
+  const stashed = useMemo(
+    () => sessionEditors.filter((editor) => editor.minimized),
+    [sessionEditors],
+  );
   const terminals = session?.terminals || [];
   const activeTerminalId = session?.activeTerminalId;
 
+  useLayoutEffect(() => {
+    if (!stashOpen || !stashBtnRef.current) {
+      setStashPos(null);
+      return;
+    }
+    const place = () => {
+      const rect = stashBtnRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setStashPos({
+        top: rect.bottom + 8,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [stashOpen, stashed.length]);
+
+  useEffect(() => {
+    if (!stashOpen) return;
+    const onDoc = (event: MouseEvent) => {
+      const t = event.target as Node;
+      if (stashBtnRef.current?.contains(t) || stashPanelRef.current?.contains(t)) return;
+      setStashOpen(false);
+    };
+    // Use click (not mousedown) so item onClick can fire first.
+    document.addEventListener('click', onDoc);
+    return () => document.removeEventListener('click', onDoc);
+  }, [stashOpen]);
+
   const requestClose = (id: string) => {
     if (!closeEditor(id)) setPendingClose(id);
+  };
+
+  const runMinimize = (id: string, _origin: DOMRect) => {
+    const btn = stashBtnRef.current?.getBoundingClientRect();
+    if (btn) {
+      setAbsorbTarget({ x: btn.left + btn.width / 2, y: btn.top + btn.height / 2 });
+    }
+    setAbsorbingId(id);
+    window.setTimeout(() => {
+      minimizeEditor(id);
+      setAbsorbingId(null);
+      setAbsorbTarget(null);
+      stashBtnRef.current?.classList.add('is-pulse');
+      window.setTimeout(() => stashBtnRef.current?.classList.remove('is-pulse'), 420);
+    }, 320);
+  };
+
+  const runRestore = (id: string) => {
+    const btn = stashBtnRef.current?.getBoundingClientRect();
+    if (btn) {
+      setAbsorbTarget({ x: btn.left + btn.width / 2, y: btn.top + btn.height / 2 });
+    }
+    setRestoringId(id);
+    restoreEditor(id);
+    setStashOpen(false);
+    stashBtnRef.current?.classList.add('is-pulse');
+    window.setTimeout(() => stashBtnRef.current?.classList.remove('is-pulse'), 420);
+    window.setTimeout(() => {
+      setRestoringId(null);
+      setAbsorbTarget(null);
+    }, 340);
   };
 
   return (
     <section className="workbench">
       <div className="workbench-tabs" role="tablist" aria-label="工作区">
         {terminals.map((pane) => {
-          const active = !editorVisible && pane.id === activeTerminalId;
+          const active = pane.id === activeTerminalId;
           const label = terminals.length === 1 ? '终端' : pane.title;
           return (
             <div
@@ -97,111 +168,123 @@ export function Workspace() {
           <Plus size={15} />
         </button>
 
-        {sessionEditors.map((editor) => {
-          const name = editor.path.split('/').pop() || editor.path;
-          const active = editorVisible && activeEditor?.id === editor.id;
-          return (
-            <div
-              className={`workbench-tab editor-tab ${active ? 'active' : ''}`}
-              key={editor.id}
-              role="tab"
-              aria-selected={active}
-              tabIndex={0}
-              onClick={() => setActiveEditor(editor.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') setActiveEditor(editor.id);
-              }}
-              title={editor.path}
-            >
-              <FileCode2 size={14} />
-              <span>{name}</span>
-              {editor.dirty && <span className="dirty-dot" aria-label="未保存" />}
-              <button
-                type="button"
-                className="tab-close-button"
-                aria-label={`关闭 ${name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  requestClose(editor.id);
-                }}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          );
-        })}
-
-        {!editorVisible && (
-          <div className="workbench-tabs-actions">
+        <div className="workbench-tabs-actions">
+          <button
+            type="button"
+            className="icon-button"
+            title="搜索终端 (Ctrl+F)"
+            aria-label="搜索终端"
+            onClick={() => window.dispatchEvent(new Event('ssh-term-toggle-search'))}
+          >
+            <Search size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="清屏"
+            aria-label="清屏"
+            onClick={() => window.dispatchEvent(new Event('ssh-term-clear'))}
+          >
+            <Trash2 size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="切换文件面板"
+            aria-label="切换文件面板"
+            onClick={toggleFilePanel}
+          >
+            <Files size={15} />
+          </button>
+          <div className="editor-stash-wrap">
             <button
+              ref={stashBtnRef}
               type="button"
-              className="icon-button"
-              title="搜索终端 (Ctrl+F)"
-              aria-label="搜索终端"
-              onClick={() => window.dispatchEvent(new Event('ssh-term-toggle-search'))}
+              className={`icon-button editor-stash-btn ${stashed.length ? 'has-items' : ''}`}
+              title={stashed.length ? `收纳的文件（${stashed.length}）` : '收纳的文件'}
+              aria-label="收纳的文件"
+              aria-expanded={stashOpen}
+              onClick={() => setStashOpen((open) => !open)}
             >
-              <Search size={15} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              title="清屏"
-              aria-label="清屏"
-              onClick={() => window.dispatchEvent(new Event('ssh-term-clear'))}
-            >
-              <Trash2 size={15} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              title="切换文件面板"
-              aria-label="切换文件面板"
-              onClick={toggleFilePanel}
-            >
-              <Files size={15} />
+              <Archive size={15} />
+              {stashed.length > 0 && <span className="editor-stash-badge">{stashed.length}</span>}
             </button>
           </div>
-        )}
+        </div>
       </div>
 
+      {stashOpen && stashPos && createPortal(
+        <div
+          ref={stashPanelRef}
+          className="editor-stash-panel"
+          role="menu"
+          style={{ top: stashPos.top, right: stashPos.right }}
+        >
+          <div className="editor-stash-heading">收纳的文件</div>
+          {stashed.length === 0 ? (
+            <div className="editor-stash-empty">暂无收纳的文件</div>
+          ) : (
+            stashed.map((editor) => {
+              const name = editor.path.split('/').pop() || editor.path;
+              return (
+                <div
+                  key={editor.id}
+                  className="editor-stash-item"
+                  role="menuitem"
+                  tabIndex={0}
+                  title={editor.path}
+                  onClick={() => runRestore(editor.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      runRestore(editor.id);
+                    }
+                  }}
+                >
+                  <FileCode2 size={14} />
+                  <span className="editor-stash-name">{name}</span>
+                  {editor.dirty && <span className="dirty-dot" aria-label="未保存" />}
+                  <button
+                    type="button"
+                    className="editor-stash-close"
+                    aria-label={`关闭 ${name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      requestClose(editor.id);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>,
+        document.body,
+      )}
+
       <div className="workbench-surface">
-        <div className={`terminal-layer ${editorVisible ? 'is-hidden' : ''}`}>
-          <TerminalView visible={!editorVisible} />
+        <div className="terminal-layer">
+          <TerminalView visible />
         </div>
-        {editorVisible && activeEditor && (
-          <div className="editor-layer">
-            <div className="editor-breadcrumb">
-              <span className="editor-full-path" title={activeEditor.path}>{activeEditor.path}</span>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                disabled={!activeEditor.dirty || activeEditor.saving}
-                onClick={() => saveEditor(activeEditor.id)}
-              >
-                <Save size={14} />
-                {activeEditor.saving ? '保存中…' : '保存'}
-              </button>
-            </div>
-            <div className="editor-canvas">
-              <Suspense fallback={<div className="editor-loading"><span className="loader" />正在加载编辑器…</div>}>
-                <CodeEditor
-                  key={activeEditor.id}
-                  editor={activeEditor}
-                  onChange={(content) => setEditorContent(activeEditor.id, content)}
-                  onSave={() => saveEditor(activeEditor.id)}
-                  onCursorChange={(line, column) => setCursor({ line, column })}
-                />
-              </Suspense>
-            </div>
-            <div className="editor-statusbar">
-              <span>{activeEditor.dirty ? '已修改' : '已保存'}</span>
-              <span>{language}</span>
-              <span>UTF-8</span>
-              <span>{formatSize(activeEditor.size)}</span>
-              <span>行 {cursor.line}，列 {cursor.column}</span>
-            </div>
-          </div>
-        )}
+
+        <div className="editor-float-layer" aria-live="polite">
+          {floatEditors.map((editor, index) => (
+            <EditorFloat
+              key={editor.id}
+              editor={editor}
+              offset={index}
+              absorbing={absorbingId === editor.id}
+              restoring={restoringId === editor.id}
+              absorbTarget={absorbTarget}
+              onFocus={() => focusEditor(editor.id)}
+              onMinimize={(rect) => runMinimize(editor.id, rect)}
+              onClose={() => requestClose(editor.id)}
+              onChange={(content) => setEditorContent(editor.id, content)}
+              onSave={() => saveEditor(editor.id)}
+            />
+          ))}
+        </div>
       </div>
 
       {pendingClose && (
@@ -229,6 +312,7 @@ export function Workspace() {
                 onClick={() => {
                   saveEditor(pendingClose);
                   setPendingClose(null);
+                  setActiveEditor(pendingClose);
                 }}
               >
                 保存文件

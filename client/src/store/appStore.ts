@@ -55,6 +55,10 @@ export type EditorFile = {
   writeId: string | null;
   savingContent: string | null;
   dirty: boolean;
+  /** Floating window minimized into the stash tray. */
+  minimized: boolean;
+  /** Stacking order for floating editor windows. */
+  zIndex: number;
 };
 
 export type ToastItem = {
@@ -189,6 +193,9 @@ type AppState = {
   previewFile: (path: string) => void;
   createFile: (name: string) => void;
   setActiveEditor: (id: string) => void;
+  minimizeEditor: (id: string) => void;
+  restoreEditor: (id: string) => void;
+  focusEditor: (id: string) => void;
   showTerminal: () => void;
   setEditorContent: (id: string, content: string) => void;
   saveEditor: (id?: string) => void;
@@ -319,6 +326,12 @@ function patchSession(
 const connectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let editorZCounter = 20;
+
+function nextEditorZ() {
+  editorZCounter += 1;
+  return editorZCounter;
+}
 const shellOpenTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function shellOpenKey(sessionId: string, terminalId: string) {
@@ -1118,12 +1131,57 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveEditor: (editorId) => {
     const editor = get().editors.find((item) => item.id === editorId);
     if (!editor) return;
+    const zIndex = nextEditorZ();
     set({
       activeSessionId: editor.sessionId,
+      editors: get().editors.map((item) => (
+        item.id === editorId ? { ...item, minimized: false, zIndex } : item
+      )),
       sessions: patchSession(get().sessions, editor.sessionId, {
         activeEditorId: editorId,
-        workspaceMode: 'editor',
+        workspaceMode: 'terminal',
       }),
+    });
+  },
+
+  minimizeEditor: (editorId) => {
+    const editor = get().editors.find((item) => item.id === editorId);
+    if (!editor || editor.minimized) return;
+    const sess = get().sessions.find((item) => item.id === editor.sessionId);
+    let activeEditorId = sess?.activeEditorId ?? null;
+    if (activeEditorId === editorId) {
+      const next = get().editors
+        .filter((item) => item.sessionId === editor.sessionId && item.id !== editorId && !item.minimized)
+        .sort((a, b) => b.zIndex - a.zIndex)[0];
+      activeEditorId = next?.id || null;
+    }
+    set({
+      editors: get().editors.map((item) => (
+        item.id === editorId ? { ...item, minimized: true } : item
+      )),
+      sessions: patchSession(get().sessions, editor.sessionId, {
+        activeEditorId,
+        workspaceMode: 'terminal',
+      }),
+    });
+  },
+
+  restoreEditor: (editorId) => {
+    get().setActiveEditor(editorId);
+  },
+
+  focusEditor: (editorId) => {
+    const editor = get().editors.find((item) => item.id === editorId);
+    if (!editor || editor.minimized) return;
+    const zIndex = nextEditorZ();
+    set({
+      editors: get().editors.map((item) => (
+        item.id === editorId ? { ...item, zIndex } : item
+      )),
+      sessions: patchSession(get().sessions, editor.sessionId, {
+        activeEditorId: editorId,
+      }),
+      activeSessionId: editor.sessionId,
     });
   },
 
@@ -1205,13 +1263,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (editor.dirty && !force) return false;
     if (editor.writeId) clearTimer(saveTimers, editor.writeId);
     const editors = get().editors.filter((item) => item.id !== editorId);
-    const siblings = editors.filter((item) => item.sessionId === editor.sessionId);
-    const next = siblings[siblings.length - 1] || null;
+    const next = editors
+      .filter((item) => item.sessionId === editor.sessionId && !item.minimized)
+      .sort((a, b) => b.zIndex - a.zIndex)[0]
+      || editors.filter((item) => item.sessionId === editor.sessionId).slice(-1)[0]
+      || null;
     set({
       editors,
       sessions: patchSession(get().sessions, editor.sessionId, {
         activeEditorId: next?.id || null,
-        workspaceMode: next ? 'editor' : 'terminal',
+        workspaceMode: 'terminal',
       }),
     });
     return true;
@@ -1645,7 +1706,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           return {
             ...session,
             activeEditorId: fallback?.id || null,
-            workspaceMode: fallback ? 'editor' : 'terminal',
+            workspaceMode: 'terminal',
           };
         });
       }
@@ -1677,6 +1738,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const content = (msg.content as string) || '';
       const path = (msg.path as string) || pending.path;
       const editorId = `${pending.sessionId}::${path}`;
+      const zIndex = nextEditorZ();
       const editor: EditorFile = {
         id: editorId,
         sessionId: pending.sessionId,
@@ -1689,16 +1751,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         writeId: null,
         savingContent: null,
         dirty: false,
+        minimized: false,
+        zIndex,
       };
       const editors = get().editors.some((item) => item.id === editorId)
-        ? get().editors.map((item) => (item.id === editorId ? editor : item))
+        ? get().editors.map((item) => (
+          item.id === editorId
+            ? { ...editor, zIndex, minimized: false }
+            : item
+        ))
         : [...get().editors, editor];
       set({
         pendingPreviews,
         editors,
+        activeSessionId: pending.sessionId,
         sessions: patchSession(get().sessions, pending.sessionId, {
           activeEditorId: editorId,
-          workspaceMode: 'editor',
+          workspaceMode: 'terminal',
         }),
       });
       return;

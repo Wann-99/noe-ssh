@@ -203,7 +203,12 @@ function buildAppMenu() {
           },
         },
         { type: 'separator' },
-        process.platform === 'darwin' ? { role: 'close' } : { role: 'quit', label: '退出' },
+        process.platform === 'darwin'
+          ? { role: 'close' }
+          : {
+              label: '退出',
+              click: () => quitApp(),
+            },
       ],
     },
     {
@@ -224,6 +229,26 @@ function buildAppMenu() {
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function quitApp() {
+  isQuitting = true;
+  stopServer();
+  try {
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
+  } catch {
+    /* ignore */
+  }
+  if (mainWindow) {
+    mainWindow.removeAllListeners('close');
+    mainWindow.destroy();
+    mainWindow = null;
+  }
+  // Force-exit: app.quit() alone can leave the Node server / tray alive.
+  setTimeout(() => app.exit(0), 50);
 }
 
 function createTray() {
@@ -249,10 +274,7 @@ function createTray() {
     { type: 'separator' },
     {
       label: '退出',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
+      click: () => quitApp(),
     },
   ]);
 
@@ -294,9 +316,8 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    // keep running in tray
-  }
+  // Keep process for tray on Linux/Windows; macOS uses activate.
+  // Explicit「退出」goes through quitApp() → app.exit(0).
 });
 
 app.on('activate', () => {

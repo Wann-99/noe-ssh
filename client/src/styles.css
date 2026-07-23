@@ -1871,6 +1871,244 @@ body.splitter-active * {
   min-height: 0;
 }
 .terminal-layer.is-hidden { visibility: hidden; pointer-events: none; }
+.editor-float-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+  overflow: hidden;
+}
+.editor-float {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(820px, calc(100% - 32px));
+  height: min(560px, calc(100% - 40px));
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  border: 1px solid rgba(71, 85, 105, 0.9);
+  border-radius: 14px;
+  /* 不透明，避免终端透出导致看不清 */
+  background: #141a24;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  overflow: hidden;
+  transform-origin: center center;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.editor-float.is-entering {
+  animation: editor-float-in 0.22s ease-out;
+}
+.editor-float.is-stashed {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  /* Keep in DOM (no remount) so restore does not flash. */
+}
+.editor-float.is-absorbing {
+  animation: editor-float-absorb 0.32s cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+.editor-float.is-restoring {
+  animation: editor-float-restore 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  pointer-events: none;
+  visibility: visible;
+}
+@keyframes editor-float-in {
+  from { opacity: 0.85; transform: translate(72px, 56px) scale(0.98); }
+  to { opacity: 1; }
+}
+@keyframes editor-float-absorb {
+  from {
+    opacity: 1;
+    transform: translate(var(--float-x, 0px), var(--float-y, 0px)) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--absorb-x, 0px), var(--absorb-y, 0px)) scale(0.12);
+  }
+}
+@keyframes editor-float-restore {
+  from {
+    opacity: 0;
+    transform: translate(var(--absorb-x, 0px), var(--absorb-y, 0px)) scale(0.12);
+  }
+  to {
+    opacity: 1;
+    transform: translate(var(--float-x, 0px), var(--float-y, 0px)) scale(1);
+  }
+}
+.editor-float-titlebar {
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #1a2230;
+  cursor: grab;
+  user-select: none;
+}
+.editor-float-titlebar:active { cursor: grabbing; }
+.editor-float-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.editor-float-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.editor-float-path {
+  flex: 0 0 auto;
+  padding: 4px 14px 6px;
+  font-size: .68rem;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: #141a24;
+}
+.editor-float-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0f141d;
+}
+.editor-float-body .code-editor-host,
+.editor-float-body .editor-loading {
+  flex: 1;
+  min-height: 0;
+  background: #0f141d;
+}
+.editor-float-body .cm-editor,
+.editor-float-body .cm-scroller,
+.editor-float-body .cm-gutters {
+  background: #0f141d !important;
+}
+.editor-float-status {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+  font-size: .68rem;
+  background: #1a2230;
+}
+.editor-stash-wrap {
+  position: relative;
+}
+.editor-stash-btn {
+  position: relative;
+}
+.editor-stash-btn.has-items {
+  color: var(--text-primary);
+}
+.editor-stash-btn.is-pulse {
+  animation: editor-stash-pulse 0.42s ease;
+}
+@keyframes editor-stash-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.18); color: #93c5fd; }
+  100% { transform: scale(1); }
+}
+.editor-stash-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 99px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+.editor-stash-panel {
+  position: fixed;
+  z-index: 1200;
+  width: min(300px, 70vw);
+  max-height: min(360px, 50vh);
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
+  background: #1a2230;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  animation: editor-stash-panel-in 0.18s ease-out;
+}
+.editor-stash-heading {
+  padding: 6px 10px 8px;
+  color: var(--text-faint);
+  font-size: .68rem;
+  letter-spacing: 0.02em;
+}
+@keyframes editor-stash-panel-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.editor-stash-empty {
+  padding: 14px 10px;
+  color: var(--text-faint);
+  font-size: .74rem;
+  text-align: center;
+}
+.editor-stash-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: .78rem;
+  text-align: left;
+  cursor: pointer;
+}
+.editor-stash-item:hover,
+.editor-stash-item:focus-visible {
+  background: rgba(59, 130, 246, 0.18);
+  outline: none;
+}
+.editor-stash-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-stash-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.editor-stash-close:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
 .terminal-wrap {
   width: 100%;
   height: 100%;
