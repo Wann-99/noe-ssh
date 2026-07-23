@@ -1,6 +1,6 @@
 #!/bin/bash
-# NOTE: electron-builder expands ${macro} in this file — do NOT use ${var}.
-# Use $var or "$var"/concat instead.
+# electron-builder template-expands dollar-brace tokens in this file.
+# Keep only plain $var / quoted concat — never dollar-brace forms.
 set -e
 SANDBOX='/opt/Noe-SSH/chrome-sandbox'
 if [ -f "$SANDBOX" ]; then
@@ -20,7 +20,7 @@ for size in 16 32 48 64 128 256 512; do
   fi
 done
 
-# Fallback: if only 1024 exists, copy into common menu sizes
+# Fallback when only 1024x1024 was installed by the packager
 if [ -f "$HICOLOR"/1024x1024/apps/noe-ssh.png ]; then
   for size in 48 64 128 256; do
     dest="$HICOLOR"/"$size"x"$size"/apps/noe-ssh.png
