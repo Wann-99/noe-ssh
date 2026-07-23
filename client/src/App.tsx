@@ -11,8 +11,10 @@ import { AdminPanel } from './components/AdminPanel';
 import { VaultGate } from './components/VaultGate';
 import { BgModal } from './components/BgModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { UpdateModal } from './components/UpdateModal';
 import { Splitter } from './components/Splitter';
 import { ToastHost } from './components/ToastHost';
+import { getDesktopApi } from './lib/desktop';
 
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 480;
@@ -45,6 +47,7 @@ export default function App() {
   const disconnectActive = useAppStore((s) => s.disconnectActive);
   const [bgOpen, setBgOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
   const [vaultGate, setVaultGate] = useState<'unlock' | 'setup' | null>(hasVault() ? 'unlock' : null);
   const [sidebarW, setSidebarW] = useState(() =>
     loadWidth('ssh_sidebar_w', SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX));
@@ -77,6 +80,14 @@ export default function App() {
   }, [init]);
 
   useEffect(() => {
+    const api = getDesktopApi();
+    if (!api) return undefined;
+    return api.updater.onOpen(() => {
+      setUpdateOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
     window.dispatchEvent(new Event('resize'));
     window.dispatchEvent(new CustomEvent('ssh-layout-resize'));
   }, [filePanelOpen, sidebarW, filePanelW]);
@@ -98,6 +109,7 @@ export default function App() {
       if (e.key === 'Escape') {
         setBgOpen(false);
         setShortcutsOpen(false);
+        setUpdateOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -174,6 +186,10 @@ export default function App() {
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onSetupVault={() => setVaultGate('setup')}
         onUnlockVault={() => setVaultGate('unlock')}
+        onOpenUpdate={() => {
+          setUpdateOpen(true);
+          void getDesktopApi()?.updater.check();
+        }}
       />
       <SessionTabs />
       <div className="workspace">
@@ -206,6 +222,7 @@ export default function App() {
       </div>
       {bgOpen && <BgModal onClose={() => setBgOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
+      <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
       {!hasVault() && (
         <VaultBanner onSetup={() => setVaultGate('setup')} />
       )}

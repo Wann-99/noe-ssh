@@ -155,7 +155,7 @@ function createWindow() {
     minHeight: 600,
     title: 'Noe-SSH',
     icon: iconPath,
-    autoHideMenuBar: false,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -174,57 +174,25 @@ function createWindow() {
 }
 
 function buildAppMenu() {
+  // Windows / Linux: hide the File / Help menubar entirely.
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  // macOS keeps the system app menu; update check opens the in-page window.
   const template = [
-    ...(process.platform === 'darwin'
-      ? [{
-          label: app.name,
-          submenu: [
-            { role: 'about' },
-            { type: 'separator' },
-            {
-              label: '检查更新…',
-              click: () => { checkForUpdatesManual(); },
-            },
-            { type: 'separator' },
-            { role: 'quit' },
-          ],
-        }]
-      : []),
     {
-      label: '文件',
+      label: app.name,
       submenu: [
-        {
-          label: '显示窗口',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.show();
-              mainWindow.focus();
-            }
-          },
-        },
+        { role: 'about' },
         { type: 'separator' },
-        process.platform === 'darwin'
-          ? { role: 'close' }
-          : {
-              label: '退出',
-              click: () => quitApp(),
-            },
-      ],
-    },
-    {
-      label: '帮助',
-      submenu: [
         {
           label: '检查更新…',
           click: () => { checkForUpdatesManual(); },
         },
-        {
-          label: '打开发布页',
-          click: async () => {
-            const { shell } = require('electron');
-            await shell.openExternal('https://github.com/Wann-99/noe-ssh/releases');
-          },
-        },
+        { type: 'separator' },
+        { role: 'quit' },
       ],
     },
   ];
@@ -269,7 +237,13 @@ function createTray() {
     },
     {
       label: '检查更新…',
-      click: () => { checkForUpdatesManual(); },
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+        checkForUpdatesManual();
+      },
     },
     { type: 'separator' },
     {
@@ -296,6 +270,7 @@ app.whenReady().then(async () => {
     createTray();
     setupAutoUpdater({
       setQuitting: () => { isQuitting = true; },
+      getMainWindow: () => mainWindow,
     });
   } catch (err) {
     console.error(err);

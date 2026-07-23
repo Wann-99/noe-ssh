@@ -133,6 +133,8 @@ type AppState = {
   authRequired: boolean;
   authenticated: boolean;
   authMode: 'users' | 'token' | 'none';
+  /** Runtime host mode from /api/health (desktop | portable | server). */
+  appMode: 'desktop' | 'portable' | 'server';
   user: AuthUser | null;
   showAdmin: boolean;
   vaultKey: CryptoKey | null;
@@ -368,6 +370,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   authRequired: false,
   authenticated: false,
   authMode: 'none',
+  appMode: 'server',
   user: null,
   showAdmin: false,
   vaultKey: null,
@@ -402,7 +405,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch('/api/health');
       const data = await res.json();
       const mode = (data.authMode || (data.authRequired ? 'token' : 'none')) as AppState['authMode'];
-      set({ authRequired: Boolean(data.authRequired), authMode: mode });
+      const appMode = (
+        data.mode === 'desktop' || data.mode === 'portable' ? data.mode : 'server'
+      ) as AppState['appMode'];
+      set({ authRequired: Boolean(data.authRequired), authMode: mode, appMode });
       if (!data.authRequired) {
         set({ authenticated: true, user: null });
       } else if (get().accessToken) {
@@ -418,7 +424,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
     } catch {
-      set({ authenticated: true, authRequired: false, authMode: 'none' });
+      set({ authenticated: true, authRequired: false, authMode: 'none', appMode: 'server' });
     }
 
     sshSocket.setToken(get().accessToken);

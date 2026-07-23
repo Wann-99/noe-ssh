@@ -101,9 +101,16 @@ async function bootstrapAdmin(database) {
  * Decide auth mode:
  * - users: NOE_SSH_ADMIN_PASSWORD set, or DB already has users
  * - token: legacy NOE_SSH_ACCESS_TOKEN only
- * - none: no auth (desktop/portable default)
+ * - none: no auth (desktop/portable always; server default when unset)
  */
 async function initDb() {
+  const appMode = envFirst('NOE_SSH_MODE', 'SUPER_SSH_MODE');
+  // Desktop / portable: local-only UI — never require app login.
+  if (appMode === 'desktop' || appMode === 'portable') {
+    authMode = 'none';
+    return { authMode, dbPath: null };
+  }
+
   const accessToken = envFirst('NOE_SSH_ACCESS_TOKEN', 'SUPER_SSH_ACCESS_TOKEN');
   const adminPassword = envFirst('NOE_SSH_ADMIN_PASSWORD', 'SUPER_SSH_ADMIN_PASSWORD');
   const forceUsers = envFirst('NOE_SSH_AUTH_MODE') === 'users';

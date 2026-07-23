@@ -9,12 +9,14 @@ import {
   LogOut,
   Fullscreen,
   Minimize2,
+  RefreshCw,
   Settings,
   Shield,
   ShieldCheck,
 } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { hasVault } from '../lib/crypto';
+import { getDesktopApi } from '../lib/desktop';
 
 type MenuSection = 'settings' | 'security' | null;
 
@@ -35,12 +37,15 @@ export function Header({
   onOpenShortcuts,
   onSetupVault,
   onUnlockVault,
+  onOpenUpdate,
 }: {
   onOpenBg: () => void;
   onOpenShortcuts: () => void;
   onSetupVault: () => void;
   onUnlockVault: () => void;
+  onOpenUpdate?: () => void;
 }) {
+  const isDesktop = Boolean(getDesktopApi());
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const lockVault = useAppStore((s) => s.lockVault);
@@ -195,6 +200,18 @@ export function Header({
           >
             <Image size={14} />背景
           </button>
+          {isDesktop && onOpenUpdate && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                onOpenUpdate();
+              }}
+            >
+              <RefreshCw size={14} />检查更新
+            </button>
+          )}
         </div>
       )}
 
@@ -333,7 +350,7 @@ export function Header({
             onClick={() => setUserMenuOpen((open) => !open)}
           >
             <span className="header-user-avatar" aria-hidden>
-              {user ? user.username.slice(0, 1).toUpperCase() : '设'}
+              {user ? user.username.slice(0, 1).toUpperCase() : 'N'}
             </span>
             <ChevronDown size={14} className="header-user-caret" aria-hidden />
           </button>

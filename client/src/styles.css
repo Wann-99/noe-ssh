@@ -1529,7 +1529,39 @@ body.splitter-active * {
   padding: 12px 14px; border-bottom: 1px solid var(--border);
 }
 .modal-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.modal-actions { display: flex; gap: 8px; }
+.modal-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.update-modal { width: min(420px, 100%); }
+.update-status {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--text);
+}
+.update-detail {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.update-progress { display: flex; flex-direction: column; gap: 6px; }
+.update-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  transition: width 0.15s ease-out;
+}
+.update-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .preview-content {
   margin: 0;
   max-height: 70vh;
