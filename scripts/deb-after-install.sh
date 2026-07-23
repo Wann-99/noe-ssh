@@ -1,5 +1,6 @@
 #!/bin/bash
-# Ensure Electron chrome-sandbox works and desktop icon appears in menus.
+# NOTE: electron-builder expands ${macro} in this file — do NOT use ${var}.
+# Use $var or "$var"/concat instead.
 set -e
 SANDBOX='/opt/Noe-SSH/chrome-sandbox'
 if [ -f "$SANDBOX" ]; then
@@ -7,39 +8,25 @@ if [ -f "$SANDBOX" ]; then
   chmod 4755 "$SANDBOX" || true
 fi
 
-# Install multi-size icons (many DEs ignore lone 1024x1024).
-ICON_SRC_DIR='/opt/Noe-SSH'
 HICOLOR='/usr/share/icons/hicolor'
-for size in 16 32 48 64 128 256 512; do
-  src="${ICON_SRC_DIR}/${size}x${size}.png"
-  # electron-builder may place icons under usr/share already; also check resources
-  if [ ! -f "$src" ]; then
-    src="/usr/share/icons/hicolor/${size}x${size}/apps/noe-ssh.png"
-  fi
-  if [ -f "/opt/Noe-SSH/resources/app/dist/client/favicon.png" ] && [ ! -f "$src" ]; then
-    :
-  fi
-done
-
-# Prefer packaged sized PNGs from buildResources if electron-builder copied them beside binary
 APP_DIR='/opt/Noe-SSH'
+
 for size in 16 32 48 64 128 256 512; do
-  dest="${HICOLOR}/${size}x${size}/apps"
-  mkdir -p "$dest"
-  if [ -f "${APP_DIR}/${size}x${size}.png" ]; then
-    cp -f "${APP_DIR}/${size}x${size}.png" "${dest}/noe-ssh.png" || true
-  elif [ -f "${HICOLOR}/1024x1024/apps/noe-ssh.png" ] && command -v convert >/dev/null 2>&1; then
-    convert "${HICOLOR}/1024x1024/apps/noe-ssh.png" -resize "${size}x${size}" "${dest}/noe-ssh.png" || true
+  dest_dir="$HICOLOR"/"$size"x"$size"/apps
+  mkdir -p "$dest_dir"
+  src="$APP_DIR"/"$size"x"$size".png
+  if [ -f "$src" ]; then
+    cp -f "$src" "$dest_dir"/noe-ssh.png || true
   fi
 done
 
-# Fallback: if only 1024 exists, symlink common sizes to it (better than missing)
-if [ -f "${HICOLOR}/1024x1024/apps/noe-ssh.png" ]; then
+# Fallback: if only 1024 exists, copy into common menu sizes
+if [ -f "$HICOLOR"/1024x1024/apps/noe-ssh.png ]; then
   for size in 48 64 128 256; do
-    dest="${HICOLOR}/${size}x${size}/apps/noe-ssh.png"
+    dest="$HICOLOR"/"$size"x"$size"/apps/noe-ssh.png
     if [ ! -f "$dest" ]; then
       mkdir -p "$(dirname "$dest")"
-      cp -f "${HICOLOR}/1024x1024/apps/noe-ssh.png" "$dest" || true
+      cp -f "$HICOLOR"/1024x1024/apps/noe-ssh.png "$dest" || true
     fi
   done
 fi
