@@ -3,6 +3,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const { setupAutoUpdater, checkForUpdatesManual } = require('./updater');
+const { setupEditorWindows, closeAllEditorWindows } = require('./editorWindows');
 
 const HOST = '127.0.0.1';
 let listenPort = Number(process.env.PORT) || 3000;
@@ -201,6 +202,7 @@ function buildAppMenu() {
 
 function quitApp() {
   isQuitting = true;
+  closeAllEditorWindows();
   stopServer();
   try {
     if (tray) {
@@ -271,6 +273,10 @@ app.whenReady().then(async () => {
     setupAutoUpdater({
       setQuitting: () => { isQuitting = true; },
       getMainWindow: () => mainWindow,
+    });
+    setupEditorWindows({
+      getMainWindow: () => mainWindow,
+      getBaseUrl: () => `http://${HOST}:${listenPort}`,
     });
   } catch (err) {
     console.error(err);

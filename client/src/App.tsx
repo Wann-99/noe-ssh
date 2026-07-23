@@ -12,9 +12,10 @@ import { VaultGate } from './components/VaultGate';
 import { BgModal } from './components/BgModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { UpdateModal } from './components/UpdateModal';
+import { DetachedEditor } from './components/DetachedEditor';
 import { Splitter } from './components/Splitter';
 import { ToastHost } from './components/ToastHost';
-import { getDesktopApi } from './lib/desktop';
+import { getDesktopApi, getDetachedEditorId } from './lib/desktop';
 
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 480;
@@ -34,6 +35,7 @@ function loadWidth(key: string, fallback: number, min: number, max: number) {
 }
 
 export default function App() {
+  const detachedEditorId = getDetachedEditorId();
   const init = useAppStore((s) => s.init);
   const authenticated = useAppStore((s) => s.authenticated);
   const authRequired = useAppStore((s) => s.authRequired);
@@ -75,17 +77,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (detachedEditorId) return;
     init();
     if (hasVault()) setVaultGate('unlock');
-  }, [init]);
+  }, [init, detachedEditorId]);
 
   useEffect(() => {
+    if (detachedEditorId) return undefined;
     const api = getDesktopApi();
     if (!api) return undefined;
     return api.updater.onOpen(() => {
       setUpdateOpen(true);
     });
-  }, []);
+  }, [detachedEditorId]);
 
   useEffect(() => {
     window.dispatchEvent(new Event('resize'));
@@ -115,6 +119,10 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [connectActive, disconnectActive]);
+
+  if (detachedEditorId) {
+    return <DetachedEditor />;
+  }
 
   if (authRequired && !authenticated) {
     return (

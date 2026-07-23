@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { EditorState, StateEffect, type Extension } from '@codemirror/state';
 import {
   crosshairCursor,
@@ -27,7 +27,12 @@ import {
   historyKeymap,
   indentWithTab,
 } from '@codemirror/commands';
-import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+import {
+  highlightSelectionMatches,
+  openSearchPanel,
+  search,
+  searchKeymap,
+} from '@codemirror/search';
 import {
   autocompletion,
   closeBrackets,
@@ -128,29 +133,78 @@ const editorTheme = EditorView.theme({
     border: '1px solid rgba(255,255,255,.12)',
     color: '#e8eefc',
   },
-  '.cm-panels': { backgroundColor: '#1a2230', color: '#e8eefc' },
+  '.cm-panels': {
+    backgroundColor: '#1a2230',
+    color: '#e8eefc',
+    borderBottom: '1px solid rgba(255,255,255,.1)',
+  },
+  '.cm-panels.cm-panels-top': { borderBottom: '1px solid rgba(255,255,255,.1)' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid rgba(255,255,255,.1)' },
+  '.cm-panel.cm-search': {
+    padding: '8px 10px',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px',
+    alignItems: 'center',
+  },
+  '.cm-panel.cm-search input': {
+    background: '#0f141d',
+    border: '1px solid rgba(255,255,255,.14)',
+    borderRadius: '6px',
+    color: '#e8eefc',
+    padding: '4px 8px',
+    outline: 'none',
+    minWidth: '160px',
+  },
+  '.cm-panel.cm-search input:focus': { borderColor: '#82aaff' },
+  '.cm-panel.cm-search button': {
+    background: '#243044',
+    border: '1px solid rgba(255,255,255,.12)',
+    borderRadius: '6px',
+    color: '#e8eefc',
+    padding: '3px 8px',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search button:hover': { background: '#2d3c55' },
+  '.cm-panel.cm-search label': { color: '#a8b4c8', fontSize: '12px' },
   '.cm-searchMatch': { backgroundColor: 'rgba(255, 203, 107, .35)' },
   '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(130, 170, 255, .4)' },
 }, { dark: true });
 
-export function CodeEditor({
-  editor,
-  onChange,
-  onSave,
-  onCursorChange,
-}: {
+export type CodeEditorHandle = {
+  openSearch: () => void;
+  focus: () => void;
+};
+
+export const CodeEditor = forwardRef<CodeEditorHandle, {
   editor: EditorFile;
   onChange: (content: string) => void;
   onSave: () => void;
   onCursorChange: (line: number, column: number) => void;
-}) {
+}>(function CodeEditor({
+  editor,
+  onChange,
+  onSave,
+  onCursorChange,
+}, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onCursorRef = useRef(onCursorChange);
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
   onCursorRef.current = onCursorChange;
+
+  useImperativeHandle(ref, () => ({
+    openSearch: () => {
+      const view = viewRef.current;
+      if (!view) return;
+      openSearchPanel(view);
+      view.focus();
+    },
+    focus: () => viewRef.current?.focus(),
+  }), []);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -182,6 +236,7 @@ export function CodeEditor({
         crosshairCursor(),
         highlightActiveLine(),
         highlightSelectionMatches(),
+        search({ top: true }),
         EditorView.lineWrapping,
         keymap.of([
           saveKeymap,
@@ -204,6 +259,7 @@ export function CodeEditor({
       ],
     });
     const view = new EditorView({ state, parent: hostRef.current });
+    viewRef.current = view;
     let cancelled = false;
     loadLanguage(editor.path).then((extension) => {
       if (!cancelled) view.dispatch({ effects: StateEffect.appendConfig.of(extension) });
@@ -211,9 +267,10 @@ export function CodeEditor({
     view.focus();
     return () => {
       cancelled = true;
+      viewRef.current = null;
       view.destroy();
     };
   }, [editor.id, editor.path]);
 
   return <div className="code-editor-host" ref={hostRef} />;
-}
+});

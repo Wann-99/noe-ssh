@@ -1904,18 +1904,14 @@ body.splitter-active * {
 }
 .terminal-layer.is-hidden { visibility: hidden; pointer-events: none; }
 .editor-float-layer {
+  /* Floats portal to document.body; layer kept for a11y live region only. */
   position: absolute;
   inset: 0;
   z-index: 12;
   pointer-events: none;
-  overflow: hidden;
+  overflow: visible;
 }
 .editor-float {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: min(820px, calc(100% - 32px));
-  height: min(560px, calc(100% - 40px));
   display: flex;
   flex-direction: column;
   pointer-events: auto;
@@ -1929,6 +1925,53 @@ body.splitter-active * {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+.editor-float.is-viewport {
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+.editor-float.is-fill-window {
+  position: fixed;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  transform: none !important;
+}
+.detached-editor-root {
+  position: fixed;
+  inset: 0;
+  background: #141a24;
+}
+.detached-editor-empty {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  background: #141a24;
+  color: var(--muted);
+}
+.editor-float-hint {
+  margin-left: auto;
+  opacity: 0.75;
+}
+.editor-resize-edge,
+.editor-resize-corner {
+  position: absolute;
+  z-index: 3;
+}
+.editor-resize-edge.edge-n { top: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.editor-resize-edge.edge-s { bottom: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.editor-resize-edge.edge-e { top: 8px; right: 0; bottom: 8px; width: 5px; cursor: ew-resize; }
+.editor-resize-edge.edge-w { top: 8px; left: 0; bottom: 8px; width: 5px; cursor: ew-resize; }
+.editor-resize-corner { width: 12px; height: 12px; }
+.editor-resize-corner.corner-se { right: 0; bottom: 0; cursor: nwse-resize; }
+.editor-resize-corner.corner-sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.editor-resize-corner.corner-ne { right: 0; top: 0; cursor: nesw-resize; }
+.editor-resize-corner.corner-nw { left: 0; top: 0; cursor: nwse-resize; }
 .editor-float.is-entering {
   animation: editor-float-in 0.22s ease-out;
 }

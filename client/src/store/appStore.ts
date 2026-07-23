@@ -953,12 +953,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   saveCurrentConnection: async (name) => {
     const { form, vaultKey } = get();
+    const label = name.trim();
+    if (!label) {
+      get().notify('warning', '请填写连接名称');
+      return;
+    }
     if (!form.host || !form.username) {
-      alert('请至少填写主机地址和用户名');
+      get().notify('warning', '请至少填写主机地址和用户名');
       return;
     }
     if (hasVault() && !vaultKey) {
-      alert('请先解锁凭据保险库');
+      get().notify('warning', '请先解锁凭据保险库后再保存');
       return;
     }
     const jumpHost = form.useJump && form.jumpHost
@@ -981,7 +986,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (vaultKey) {
       entry = {
         id: Date.now(),
-        name,
+        name: label,
         host: form.host,
         port: form.port,
         username: form.username,
@@ -996,7 +1001,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       entry = {
         id: Date.now(),
-        name,
+        name: label,
         host: form.host,
         port: form.port,
         username: form.username,
@@ -1012,6 +1017,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const list = [...get().savedConnections, entry];
     saveRawConnections(list);
     set({ savedConnections: list, sidebarTab: 'saved' });
+    get().notify('success', '连接已保存', label);
   },
 
   deleteSaved: (id) => {

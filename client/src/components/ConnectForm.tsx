@@ -58,6 +58,10 @@ export function ConnectForm() {
   const locked = connected || connecting || disconnecting;
 
   const [hostOpen, setHostOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const saveInputRef = useRef<HTMLInputElement>(null);
   const hostWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -384,13 +388,65 @@ export function ConnectForm() {
           type="button"
           className="btn btn-ghost"
           onClick={() => {
-            const name = prompt('连接名称', `${form.username}@${form.host}`);
-            if (name) saveCurrentConnection(name);
+            setSaveName(`${form.username || 'user'}@${form.host || 'host'}`);
+            setSaveOpen(true);
+            window.setTimeout(() => {
+              saveInputRef.current?.focus();
+              saveInputRef.current?.select();
+            }, 0);
           }}
         >
           保存
         </button>
       </div>
+
+      {saveOpen && (
+        <div className="dialog-backdrop" role="presentation" onClick={() => !saving && setSaveOpen(false)}>
+          <form
+            className="dialog-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="save-conn-title"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              const name = saveName.trim();
+              if (!name || saving) return;
+              setSaving(true);
+              void saveCurrentConnection(name)
+                .then(() => setSaveOpen(false))
+                .finally(() => setSaving(false));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !saving) {
+                event.preventDefault();
+                setSaveOpen(false);
+              }
+            }}
+          >
+            <h2 id="save-conn-title">保存连接</h2>
+            <p>为这条连接起一个名称，之后可在「已保存」中一键填入。</p>
+            <label className="field">
+              <span>连接名称</span>
+              <input
+                ref={saveInputRef}
+                className="input"
+                value={saveName}
+                disabled={saving}
+                onChange={(event) => setSaveName(event.target.value)}
+              />
+            </label>
+            <div className="dialog-actions">
+              <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setSaveOpen(false)}>
+                取消
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={saving || !saveName.trim()}>
+                {saving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
