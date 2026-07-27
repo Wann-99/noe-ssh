@@ -789,6 +789,52 @@ function attachWsHub(server) {
         return;
       }
 
+      if (msg.type === MSG.SFTP_COPY) {
+        if (!sess || !sess.client) {
+          send(ws, {
+            type: MSG.SFTP_COPY_RESULT,
+            sessionId,
+            id: msg.id,
+            from: msg.from,
+            to: msg.to,
+            error: 'Not connected',
+          });
+          return;
+        }
+        try {
+          const sftpSession = await sftp.ensureSftp(sess);
+          const result = await sftp.copyPath(sftpSession, msg.from, msg.to);
+          record({
+            ...auditBase(),
+            action: 'sftp.copy',
+            sessionId,
+            targetHost: sess.targetHost,
+            targetUser: sess.targetUser,
+            targetPort: sess.targetPort,
+            path: result.to,
+            detail: { from: result.from, to: result.to, isDir: result.isDir },
+          });
+          send(ws, {
+            type: MSG.SFTP_COPY_RESULT,
+            sessionId,
+            id: msg.id,
+            from: result.from,
+            to: result.to,
+            error: null,
+          });
+        } catch (err) {
+          send(ws, {
+            type: MSG.SFTP_COPY_RESULT,
+            sessionId,
+            id: msg.id,
+            from: msg.from,
+            to: msg.to,
+            error: err.message,
+          });
+        }
+        return;
+      }
+
       if (msg.type === MSG.SFTP_RM) {
         if (!sess || !sess.client) {
           send(ws, {

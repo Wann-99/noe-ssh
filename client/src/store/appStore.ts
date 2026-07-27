@@ -19,6 +19,19 @@ import {
   type SecretFields,
 } from '../lib/crypto';
 import { BG_DATA_URL_MAX, loadStoredBgUrl } from '../lib/bgImage';
+import {
+  isSameOrDescendant,
+  joinRemotePath,
+  uniqueRemoteName,
+} from '../lib/remoteFileOps';
+
+export type FileClipboard = {
+  sessionId: string;
+  mode: 'copy' | 'cut';
+  path: string;
+  name: string;
+  isDir: boolean;
+};
 
 type DownloadBuf = {
   parts: BlobPart[];
@@ -152,6 +165,10 @@ type AppState = {
   editors: EditorFile[];
   pendingPreviews: Record<string, { sessionId: string; path: string }>;
   pendingCreates: Record<string, { sessionId: string; path: string }>;
+  /** Remote file clipboard for copy/cut/paste within a session. */
+  fileClipboard: FileClipboard | null;
+  /** Tracks an in-flight paste so cut can clear the clipboard on success. */
+  pendingPaste: { sessionId: string; opId: string; mode: 'copy' | 'cut' } | null;
   toasts: ToastItem[];
 
   init: () => Promise<void>;
@@ -192,6 +209,10 @@ type AppState = {
   mkdir: (name: string) => void;
   rename: (from: string, to: string) => void;
   removePath: (path: string) => void;
+  copyRemote: (file: RemoteFile, sessionId?: string) => void;
+  cutRemote: (file: RemoteFile, sessionId?: string) => void;
+  pasteRemote: (sessionId?: string) => void;
+  clearFileClipboard: () => void;
   previewFile: (path: string) => void;
   createFile: (name: string) => void;
   setActiveEditor: (id: string) => void;
@@ -395,6 +416,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   editors: [],
   pendingPreviews: {},
   pendingCreates: {},
+  fileClipboard: null,
+  pendingPaste: null,
   toasts: [],
 
   init: async () => {
@@ -593,14 +616,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     clearTimer(disconnectTimers, id);
     const sessions = get().sessions.filter((s) => s.id !== id);
     const editors = get().editors.filter((editor) => editor.sessionId !== id);
+    const clip = get().fileClipboard;
+    const pendingPaste = get().pendingPaste;
     let active = get().activeSessionId;
     if (active === id) active = sessions[0]?.id || null;
+    const clearClip = clip?.sessionId === id ? { fileClipboard: null as null } : {};
+    const clearPaste = pendingPaste?.sessionId === id ? { pendingPaste: null as null } : {};
     if (sessions.length === 0) {
       const s = newSession('会话 1');
-      set({ sessions: [s], activeSessionId: s.id, editors });
+      set({ sessions: [s], activeSessionId: s.id, editors, ...clearClip, ...clearPaste });
       return;
     }
-    set({ sessions, activeSessionId: active, editors });
+    set({ sessions, activeSessionId: active, editors, ...clearClip, ...clearPaste });
   },
 
   connectActive: async () => {
@@ -1093,6 +1120,112 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  clearFileClipboard: () => {
+    set({ fileClipboard: null });
+  },
+
+  copyRemote: (file, sessionId) => {
+    const id = sessionId || get().activeSessionId;
+    const sess = get().sessions.find((item) => item.id === id);
+    if (!id || !sess || sess.sftpStatus !== 'ready') return;
+    const path = joinRemotePath(sess.remotePath, file.filename);
+    set({
+      fileClipboard: {
+        sessionId: id,
+        mode: 'copy',
+        path,
+        name: file.filename,
+        isDir: file.isDir,
+      },
+    });
+    get().notify('success', '已复制', file.filename);
+  },
+
+  cutRemote: (file, sessionId) => {
+    const id = sessionId || get().activeSessionId;
+    const sess = get().sessions.find((item) => item.id === id);
+    if (!id || !sess || sess.sftpStatus !== 'ready') return;
+    const path = joinRemotePath(sess.remotePath, file.filename);
+    set({
+      fileClipboard: {
+        sessionId: id,
+        mode: 'cut',
+        path,
+        name: file.filename,
+        isDir: file.isDir,
+      },
+    });
+    get().notify('success', '已剪切', file.filename);
+  },
+
+  pasteRemote: (sessionId) => {
+    const id = sessionId || get().activeSessionId;
+    const sess = get().sessions.find((item) => item.id === id);
+    const clip = get().fileClipboard;
+    if (!id || !sess || sess.sftpStatus !== 'ready' || !clip) return;
+    if (clip.sessionId !== id) {
+      get().notify('warning', '无法粘贴', '剪贴板属于其他会话');
+      return;
+    }
+    if (sess.fileOperation || get().pendingPaste) {
+      get().notify('warning', '请稍候', '当前有文件操作正在进行');
+      return;
+    }
+
+    const destDir = sess.remotePath;
+    const samePlace = joinRemotePath(destDir, clip.name) === clip.path;
+    if (clip.mode === 'cut' && samePlace) {
+      get().notify('info', '已在目标位置', clip.name);
+      return;
+    }
+
+    const taken = new Set(sess.files.map((item) => item.filename));
+    const destName = uniqueRemoteName(clip.name, clip.isDir, taken);
+    const to = joinRemotePath(destDir, destName);
+
+    if (clip.isDir && isSameOrDescendant(clip.path, to)) {
+      get().notify('error', '无法粘贴', '不能将目录复制或移动到其自身或子目录中');
+      return;
+    }
+
+    if (clip.mode === 'copy') {
+      const opId = `copy-${Date.now()}`;
+      get().addCmdLog('cp', `cp -a ${clip.path} ${to}`, `复制 ${clip.name}`);
+      if (!sshSocket.send({
+        type: MSG.SFTP_COPY,
+        sessionId: id,
+        id: opId,
+        from: clip.path,
+        to,
+      })) {
+        get().notify('error', '复制失败', '控制连接已断开');
+        return;
+      }
+      set({
+        pendingPaste: { sessionId: id, opId, mode: 'copy' },
+        sessions: patchSession(get().sessions, id, { fileOperation: opId }),
+      });
+      return;
+    }
+
+    const opId = `cut-${Date.now()}`;
+    get().addCmdLog('mv', `mv ${clip.path} ${to}`, `移动 ${clip.name}`);
+    if (!sshSocket.send({
+      type: MSG.SFTP_RENAME,
+      sessionId: id,
+      id: opId,
+      from: clip.path,
+      to,
+    })) {
+      get().notify('error', '移动失败', '控制连接已断开');
+      return;
+    }
+    set({
+      pendingPaste: { sessionId: id, opId, mode: 'cut' },
+      sessions: patchSession(get().sessions, id, { fileOperation: opId }),
+    });
+  },
+
   previewFile: (path) => {
     const id = get().activeSessionId;
     const sess = get().sessions.find((item) => item.id === id);
@@ -1489,6 +1622,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       clearTransfersForSession(sessionId);
       clearTimer(connectTimers, sessionId);
       clearTimer(disconnectTimers, sessionId);
+      const clip = get().fileClipboard;
+      const pendingPaste = get().pendingPaste;
       set({
         sessions: patchSession(get().sessions, sessionId, {
           status: 'idle',
@@ -1507,6 +1642,8 @@ export const useAppStore = create<AppState>((set, get) => ({
             ? { ...editor, saving: false, writeId: null, savingContent: null }
             : editor
         )),
+        ...(clip?.sessionId === sessionId ? { fileClipboard: null } : {}),
+        ...(pendingPaste?.sessionId === sessionId ? { pendingPaste: null } : {}),
       });
       return;
     }
@@ -1670,7 +1807,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
 
-    if (type === MSG.SFTP_MKDIR_RESULT || type === MSG.SFTP_RENAME_RESULT || type === MSG.SFTP_RM_RESULT) {
+    if (
+      type === MSG.SFTP_MKDIR_RESULT
+      || type === MSG.SFTP_RENAME_RESULT
+      || type === MSG.SFTP_RM_RESULT
+      || type === MSG.SFTP_COPY_RESULT
+    ) {
       const sess = get().sessions.find((session) => session.id === sessionId);
       if (msg.id && sess?.fileOperation && sess.fileOperation !== msg.id) return;
       let editors = get().editors;
@@ -1722,12 +1864,35 @@ export const useAppStore = create<AppState>((set, get) => ({
           };
         });
       }
-      set({
+
+      const pendingPaste = get().pendingPaste;
+      const pasteMatches = pendingPaste
+        && pendingPaste.sessionId === sessionId
+        && pendingPaste.opId === msg.id;
+      const clearCut = pasteMatches && !msg.error && pendingPaste.mode === 'cut';
+      const patch: {
+        editors: EditorFile[];
+        sessions: SessionState[];
+        pendingPaste?: null;
+        fileClipboard?: FileClipboard | null;
+      } = {
         editors,
         sessions: patchSession(sessions, sessionId, { fileOperation: null }),
-      });
-      if (msg.error) get().notify('error', '文件操作失败', friendlySftpError(msg.error));
-      else get().listFiles(undefined, sessionId);
+      };
+      if (pasteMatches) patch.pendingPaste = null;
+      if (clearCut) patch.fileClipboard = null;
+      set(patch);
+
+      if (msg.error) {
+        get().notify('error', '文件操作失败', friendlySftpError(msg.error));
+      } else {
+        if (type === MSG.SFTP_COPY_RESULT) {
+          get().notify('success', '复制完成', String(msg.to || ''));
+        } else if (pasteMatches && pendingPaste.mode === 'cut') {
+          get().notify('success', '移动完成', String(msg.to || ''));
+        }
+        get().listFiles(undefined, sessionId);
+      }
       return;
     }
 

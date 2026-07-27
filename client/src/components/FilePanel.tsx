@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowUp,
+  ClipboardPaste,
+  Copy,
   Download,
   Eye,
   File,
@@ -11,14 +13,17 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Link2,
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Scissors,
   Search,
   Trash2,
   Upload,
 } from 'lucide-react';
 import type { RemoteFile } from '@shared/protocol';
+import { joinRemotePath } from '../lib/remoteFileOps';
 import { useAppStore } from '../store/appStore';
 import {
   COL_GAP,
@@ -96,13 +101,18 @@ export function FilePanel() {
   const previewFile = useAppStore((s) => s.previewFile);
   const uploadFiles = useAppStore((s) => s.uploadFiles);
   const downloadFile = useAppStore((s) => s.downloadFile);
+  const copyRemote = useAppStore((s) => s.copyRemote);
+  const cutRemote = useAppStore((s) => s.cutRemote);
+  const pasteRemote = useAppStore((s) => s.pasteRemote);
+  const fileClipboard = useAppStore((s) => s.fileClipboard);
+  const notify = useAppStore((s) => s.notify);
   const sess = sessions.find((s) => s.id === activeSessionId);
   const [filter, setFilter] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [sort, setSort] = useState<'name' | 'size' | 'mtime'>('name');
   const [selected, setSelected] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: RemoteFile } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: RemoteFile | null } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [panelW, setPanelW] = useState(360);
   const [nameFont, setNameFont] = useState('13px sans-serif');
@@ -244,6 +254,31 @@ export function FilePanel() {
   const progress = sess?.transferProgress;
   const connected = sess?.status === 'ready';
   const ready = connected && sess?.sftpStatus === 'ready';
+  const canPaste = Boolean(
+    ready
+    && fileClipboard
+    && fileClipboard.sessionId === activeSessionId
+    && !sess?.fileOperation,
+  );
+  const cutPath = fileClipboard?.mode === 'cut'
+    && fileClipboard.sessionId === activeSessionId
+    ? fileClipboard.path
+    : null;
+
+  const openContextMenu = (x: number, y: number, file: RemoteFile | null) => {
+    setContextMenu({
+      x: Math.max(6, Math.min(x, window.innerWidth - 190)),
+      y: Math.max(6, Math.min(y, window.innerHeight - 280)),
+      file,
+    });
+  };
+
+  const copyPath = (file: RemoteFile) => {
+    const full = joinRemotePath(remotePath, file.filename);
+    void navigator.clipboard.writeText(full)
+      .then(() => notify('success', '已复制路径', full))
+      .catch(() => notify('error', '复制路径失败'));
+  };
 
   useEffect(() => {
     const list = listRef.current;
@@ -445,8 +480,24 @@ export function FilePanel() {
           ['--fp-col-time' as string]: `${allocated.time}px`,
         }}
         onKeyDown={(event) => {
+          const mod = event.ctrlKey || event.metaKey;
           const file = files.find((item) => item.filename === selected);
+          if (mod && event.key.toLowerCase() === 'v') {
+            event.preventDefault();
+            if (canPaste) pasteRemote();
+            return;
+          }
           if (!file) return;
+          if (mod && event.key.toLowerCase() === 'c') {
+            event.preventDefault();
+            copyRemote(file);
+            return;
+          }
+          if (mod && event.key.toLowerCase() === 'x') {
+            event.preventDefault();
+            cutRemote(file);
+            return;
+          }
           if (event.key === 'Enter') {
             event.preventDefault();
             openFile(file);
@@ -459,6 +510,12 @@ export function FilePanel() {
             event.preventDefault();
             openDialog('delete', file);
           }
+        }}
+        onContextMenu={(event) => {
+          if ((event.target as HTMLElement).closest('.fp-row')) return;
+          event.preventDefault();
+          if (!ready) return;
+          openContextMenu(event.clientX, event.clientY, null);
         }}
         onDragEnter={(event) => {
           event.preventDefault();
@@ -550,20 +607,18 @@ export function FilePanel() {
               <span className="fp-col-menu-h" aria-hidden />
             </div>
             {files.map((f) => {
+            const fullPath = joinRemotePath(remotePath, f.filename);
+            const isCut = cutPath === fullPath;
             return (
               <div
                 key={f.filename}
-                className={`fp-row ${f.isDir ? 'is-dir' : 'is-file'} ${selected === f.filename ? 'selected' : ''}`}
+                className={`fp-row ${f.isDir ? 'is-dir' : 'is-file'} ${selected === f.filename ? 'selected' : ''} ${isCut ? 'is-cut' : ''}`}
                 onClick={() => setSelected(f.filename)}
                 onDoubleClick={() => openFile(f)}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   setSelected(f.filename);
-                  setContextMenu({
-                    x: Math.max(6, Math.min(event.clientX, window.innerWidth - 190)),
-                    y: Math.max(6, Math.min(event.clientY, window.innerHeight - 170)),
-                    file: f,
-                  });
+                  openContextMenu(event.clientX, event.clientY, f);
                 }}
               >
                 <span
@@ -595,11 +650,7 @@ export function FilePanel() {
                       event.stopPropagation();
                       setSelected(f.filename);
                       const rect = event.currentTarget.getBoundingClientRect();
-                      setContextMenu({
-                        x: Math.max(6, Math.min(rect.right - 180, window.innerWidth - 190)),
-                        y: Math.max(6, Math.min(rect.bottom + 4, window.innerHeight - 170)),
-                        file: f,
-                      });
+                      openContextMenu(rect.right - 180, rect.bottom + 4, f);
                     }}
                   >
                     <MoreHorizontal size={15} />
@@ -618,35 +669,95 @@ export function FilePanel() {
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onPointerDown={(event) => event.stopPropagation()}
         >
+          {contextMenu.file && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const file = contextMenu.file!;
+                  setContextMenu(null);
+                  openFile(file);
+                }}
+              >
+                {contextMenu.file.isDir ? <Eye size={14} /> : <Pencil size={14} />}
+                {contextMenu.file.isDir ? '打开' : '编辑'}
+              </button>
+              {!contextMenu.file.isDir && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const full = joinRemotePath(remotePath, contextMenu.file!.filename);
+                    downloadFile(full);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Download size={14} />下载
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  copyRemote(contextMenu.file!);
+                  setContextMenu(null);
+                }}
+              >
+                <Copy size={14} />复制
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  cutRemote(contextMenu.file!);
+                  setContextMenu(null);
+                }}
+              >
+                <Scissors size={14} />剪切
+              </button>
+            </>
+          )}
           <button
             type="button"
+            disabled={!canPaste}
             onClick={() => {
-              const file = contextMenu.file;
               setContextMenu(null);
-              openFile(file);
+              pasteRemote();
             }}
           >
-            {contextMenu.file.isDir ? <Eye size={14} /> : <Pencil size={14} />}
-            {contextMenu.file.isDir ? '打开' : '编辑'}
+            <ClipboardPaste size={14} />粘贴
           </button>
-          {!contextMenu.file.isDir && (
-            <button
-              type="button"
-              onClick={() => {
-                const full = `${remotePath}/${contextMenu.file.filename}`.replace(/\/+/g, '/');
-                downloadFile(full);
-                setContextMenu(null);
-              }}
-            >
-              <Download size={14} />下载
-            </button>
+          {contextMenu.file && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  copyPath(contextMenu.file!);
+                  setContextMenu(null);
+                }}
+              >
+                <Link2 size={14} />复制路径
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const file = contextMenu.file!;
+                  setContextMenu(null);
+                  openDialog('rename', file);
+                }}
+              >
+                <Pencil size={14} />重命名
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  const file = contextMenu.file!;
+                  setContextMenu(null);
+                  openDialog('delete', file);
+                }}
+              >
+                <Trash2 size={14} />删除
+              </button>
+            </>
           )}
-          <button type="button" onClick={() => openDialog('rename', contextMenu.file)}>
-            <Pencil size={14} />重命名
-          </button>
-          <button type="button" className="danger" onClick={() => openDialog('delete', contextMenu.file)}>
-            <Trash2 size={14} />删除
-          </button>
         </div>,
         document.body,
       )}

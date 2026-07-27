@@ -277,6 +277,116 @@ function createDownloadStream(sftp, remotePath) {
   });
 }
 
+function normalizeRemotePath(path) {
+  if (!path || path === '.') return '/';
+  const normalized = String(path).replace(/\/+/g, '/');
+  if (normalized.length > 1 && normalized.endsWith('/')) {
+    return normalized.slice(0, -1);
+  }
+  return normalized || '/';
+}
+
+function joinRemotePath(...parts) {
+  const joined = parts
+    .filter((part) => part != null && part !== '')
+    .join('/')
+    .replace(/\/+/g, '/');
+  if (joined.length > 1 && joined.endsWith('/')) return joined.slice(0, -1);
+  return joined || '/';
+}
+
+function isSameOrDescendant(ancestor, candidate) {
+  const parent = normalizeRemotePath(ancestor);
+  const child = normalizeRemotePath(candidate);
+  if (child === parent) return true;
+  if (parent === '/') return child.startsWith('/');
+  return child.startsWith(`${parent}/`);
+}
+
+function pathExists(sftp, remotePath) {
+  return stat(sftp, remotePath).then(() => true).catch((err) => {
+    if (/No such file|ENOENT/i.test(err.message || String(err))) return false;
+    throw err;
+  });
+}
+
+function copyFileStream(sftp, from, to) {
+  return new Promise((resolve, reject) => {
+    const readStream = sftp.createReadStream(from, {
+      highWaterMark: TRANSFER_CHUNK_SIZE,
+    });
+    const writeStream = sftp.createWriteStream(to, {
+      highWaterMark: TRANSFER_CHUNK_SIZE,
+    });
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    readStream.on('error', fail);
+    writeStream.on('error', fail);
+    writeStream.on('close', done);
+    readStream.pipe(writeStream);
+  });
+}
+
+/**
+ * Recursively copy a remote file or directory on a single SFTP channel.
+ * Destination must not already exist; copying a directory into itself is rejected.
+ */
+async function copyPath(sftp, from, to) {
+  const fromPath = normalizeRemotePath(from);
+  const toPath = normalizeRemotePath(to);
+  if (!fromPath || !toPath || toPath === '/') {
+    throw new Error('无效的路径');
+  }
+  if (isSameOrDescendant(fromPath, toPath)) {
+    throw new Error('不能将目录复制到其自身或子目录中');
+  }
+  if (await pathExists(sftp, toPath)) {
+    throw new Error('目标已存在');
+  }
+
+  const attrs = await stat(sftp, fromPath);
+  const isDir = (attrs.mode & 0o040000) === 0o040000;
+
+  if (isDir) {
+    await mkdir(sftp, toPath);
+    if (typeof sftp.chmod === 'function') {
+      try {
+        await new Promise((resolve, reject) => {
+          sftp.chmod(toPath, attrs.mode & 0o777, (err) => (err ? reject(err) : resolve()));
+        });
+      } catch (_) { /* ignore chmod failures */ }
+    }
+    const entries = await listDir(sftp, fromPath);
+    for (const entry of entries) {
+      await copyPath(
+        sftp,
+        joinRemotePath(fromPath, entry.filename),
+        joinRemotePath(toPath, entry.filename),
+      );
+    }
+    return { from: fromPath, to: toPath, isDir: true };
+  }
+
+  await copyFileStream(sftp, fromPath, toPath);
+  if (typeof sftp.chmod === 'function') {
+    try {
+      await new Promise((resolve, reject) => {
+        sftp.chmod(toPath, attrs.mode & 0o777, (err) => (err ? reject(err) : resolve()));
+      });
+    } catch (_) { /* ignore chmod failures */ }
+  }
+  return { from: fromPath, to: toPath, isDir: false };
+}
+
 module.exports = {
   formatMode,
   ensureSftp,
@@ -290,5 +400,9 @@ module.exports = {
   writeFile,
   createUploadStream,
   createDownloadStream,
+  copyPath,
+  normalizeRemotePath,
+  joinRemotePath,
+  isSameOrDescendant,
   PREVIEW_MAX_BYTES,
 };

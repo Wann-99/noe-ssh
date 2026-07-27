@@ -2603,6 +2603,12 @@ body.fp-col-resizing * {
   background: var(--accent-dim);
   box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.22);
 }
+.fp-row.is-cut {
+  opacity: 0.45;
+}
+.fp-row.is-cut.selected {
+  opacity: 0.7;
+}
 .fp-name {
   display: flex;
   align-items: center;
@@ -2704,7 +2710,11 @@ body.fp-col-resizing * {
   font-size: .76rem;
   text-align: left;
 }
-.context-menu button:hover { background: var(--surface-hover); }
+.context-menu button:hover:not(:disabled) { background: var(--surface-hover); }
+.context-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .context-menu button.danger { color: #ff9b96; }
 
 .secret-input { position: relative; }
