@@ -1,6 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('noeDesktop', {
+  lifecycle: {
+    onWillClose: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on('app:will-close', listener);
+      return () => ipcRenderer.removeListener('app:will-close', listener);
+    },
+  },
   updater: {
     check: () => ipcRenderer.invoke('updater:check'),
     download: () => ipcRenderer.invoke('updater:download'),

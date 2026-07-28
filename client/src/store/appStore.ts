@@ -193,6 +193,7 @@ type AppState = {
   applySavedConnection: (id: number) => Promise<boolean>;
   connectSaved: (id: number) => Promise<void>;
   disconnectActive: () => void;
+  disconnectAll: () => void;
   sendInput: (data: string, sessionId?: string, terminalId?: string) => void;
   sendResize: (cols: number, rows: number, sessionId?: string, terminalId?: string) => void;
   setActiveTerminal: (terminalId: string, sessionId?: string) => void;
@@ -335,6 +336,12 @@ function emitTermWrite(sessionId: string, data: string | Uint8Array, terminalId?
       terminalId: terminalId || DEFAULT_TERMINAL_ID,
       data,
     },
+  }));
+}
+
+function emitTermClearSession(sessionId: string) {
+  window.dispatchEvent(new CustomEvent('ssh-term-clear-session', {
+    detail: { sessionId },
   }));
 }
 
@@ -611,6 +618,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   closeSession: (id) => {
     clearTransfersForSession(id);
+    emitTermClearSession(id);
     sshSocket.send({ type: MSG.DISCONNECT, sessionId: id });
     clearTimer(connectTimers, id);
     clearTimer(disconnectTimers, id);
@@ -798,6 +806,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!sess || !['connecting', 'ready', 'error'].includes(sess.status)) return;
     clearTransfersForSession(id);
     clearTimer(connectTimers, id);
+    emitTermClearSession(id);
     set({
       sessions: patchSession(get().sessions, id, {
         status: 'disconnecting',
@@ -823,6 +832,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     disconnectTimers.set(id, setTimeout(() => {
       const current = get().sessions.find((item) => item.id === id);
       if (current?.status !== 'disconnecting') return;
+      emitTermClearSession(id);
       set({
         sessions: patchSession(get().sessions, id, {
           status: 'idle',
@@ -834,6 +844,38 @@ export const useAppStore = create<AppState>((set, get) => ({
         }),
       });
     }, 5_000));
+  },
+
+  disconnectAll: () => {
+    const sessions = get().sessions;
+    let next = sessions;
+    for (const sess of sessions) {
+      if (!['connecting', 'ready', 'error', 'disconnecting'].includes(sess.status)) continue;
+      clearTransfersForSession(sess.id);
+      clearTimer(connectTimers, sess.id);
+      clearTimer(disconnectTimers, sess.id);
+      emitTermClearSession(sess.id);
+      sshSocket.send({ type: MSG.DISCONNECT, sessionId: sess.id });
+      next = patchSession(next, sess.id, {
+        status: 'idle',
+        sftpStatus: 'idle',
+        error: null,
+        startedAt: null,
+        files: [],
+        listLoading: false,
+        listRequestId: null,
+        fileOperation: null,
+        transferProgress: null,
+        ...defaultTerminals(),
+      });
+    }
+    if (next !== sessions) {
+      set({
+        sessions: next,
+        fileClipboard: null,
+        pendingPaste: null,
+      });
+    }
   },
 
   sendInput: (data, sessionId, terminalId) => {
@@ -1512,6 +1554,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (type === 'socket-closed') {
       for (const id of connectTimers.keys()) clearTimer(connectTimers, id);
       for (const id of disconnectTimers.keys()) clearTimer(disconnectTimers, id);
+      for (const session of get().sessions) emitTermClearSession(session.id);
       set({
         sessions: get().sessions.map((session) => ({
           ...session,
@@ -1532,6 +1575,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           writeId: null,
           savingContent: null,
         })),
+        fileClipboard: null,
+        pendingPaste: null,
       });
       get().notify('error', '连接已中断', '与 Noe-SSH 服务的连接断开，可直接重新连接');
       return;
@@ -1622,6 +1667,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       clearTransfersForSession(sessionId);
       clearTimer(connectTimers, sessionId);
       clearTimer(disconnectTimers, sessionId);
+      emitTermClearSession(sessionId);
       const clip = get().fileClipboard;
       const pendingPaste = get().pendingPaste;
       set({

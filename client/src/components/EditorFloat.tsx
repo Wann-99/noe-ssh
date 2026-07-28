@@ -160,7 +160,9 @@ export function EditorFloat({
           : { transform: `translate(${pos.x}px, ${pos.y}px)` }),
       }}
       aria-hidden={stashed}
-      onMouseDown={stashed || animating ? undefined : onFocus}
+      onMouseDown={stashed || animating ? undefined : () => {
+        onFocus();
+      }}
     >
       <div
         className="editor-float-titlebar"
@@ -246,7 +248,13 @@ export function EditorFloat({
         </div>
       </div>
       <div className="editor-float-path" title={editor.path}>{editor.path}</div>
-      <div className="editor-float-body">
+      <div
+        className="editor-float-body"
+        onMouseDown={() => {
+          onFocus();
+          window.setTimeout(() => editorRef.current?.focus(), 0);
+        }}
+      >
         <Suspense fallback={<div className="editor-loading"><span className="loader" />正在加载编辑器…</div>}>
           <CodeEditor
             ref={editorRef}

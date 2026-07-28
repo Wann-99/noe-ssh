@@ -238,6 +238,47 @@ export const CodeEditor = forwardRef<CodeEditorHandle, {
         return true;
       },
     };
+    const copySelection = (view: EditorView) => {
+      const { state: st } = view;
+      const text = st.selection.ranges
+        .map((range) => st.sliceDoc(range.from, range.to))
+        .join(st.lineBreak);
+      if (!text) return false;
+      void navigator.clipboard.writeText(text).catch(() => undefined);
+      return true;
+    };
+    const clipboardKeymap = [
+      {
+        key: 'Mod-c',
+        preventDefault: true,
+        run: (view: EditorView) => copySelection(view),
+      },
+      {
+        key: 'Mod-x',
+        preventDefault: true,
+        run: (view: EditorView) => {
+          if (view.state.readOnly) return false;
+          if (!copySelection(view)) return false;
+          view.dispatch(view.state.replaceSelection(''));
+          return true;
+        },
+      },
+      {
+        key: 'Mod-v',
+        preventDefault: true,
+        run: (view: EditorView) => {
+          if (view.state.readOnly) return false;
+          void navigator.clipboard.readText()
+            .then((text) => {
+              if (!text || !viewRef.current) return;
+              viewRef.current.dispatch(viewRef.current.state.replaceSelection(text));
+              viewRef.current.focus();
+            })
+            .catch(() => undefined);
+          return true;
+        },
+      },
+    ];
     const state = EditorState.create({
       doc: editor.content,
       extensions: [
@@ -264,6 +305,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, {
           saveKeymap,
           findKeymap,
           replaceKeymap,
+          ...clipboardKeymap,
           indentWithTab,
           ...closeBracketsKeymap,
           ...defaultKeymap,

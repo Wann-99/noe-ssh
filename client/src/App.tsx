@@ -92,6 +92,26 @@ export default function App() {
   }, [detachedEditorId]);
 
   useEffect(() => {
+    if (detachedEditorId) return undefined;
+    const onPageHide = () => {
+      useAppStore.getState().disconnectAll();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
+
+    const api = getDesktopApi();
+    const offClose = api?.lifecycle?.onWillClose?.(() => {
+      useAppStore.getState().disconnectAll();
+    });
+
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+      offClose?.();
+    };
+  }, [detachedEditorId]);
+
+  useEffect(() => {
     window.dispatchEvent(new Event('resize'));
     window.dispatchEvent(new CustomEvent('ssh-layout-resize'));
   }, [filePanelOpen, sidebarW, filePanelW]);

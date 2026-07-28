@@ -326,8 +326,13 @@ export function FilePanel() {
 
   const openFile = (file: RemoteFile) => {
     const full = `${remotePath}/${file.filename}`.replace(/\/+/g, '/');
-    if (file.isDir) listFiles(full);
-    else previewFile(full);
+    if (file.isDir) {
+      listFiles(full);
+      return;
+    }
+    // Leave the list so Ctrl/⌘+C/V go to the editor, not remote clipboard.
+    listRef.current?.blur();
+    previewFile(full);
   };
 
   const openDialog = (type: DialogType, file?: RemoteFile) => {
@@ -480,6 +485,17 @@ export function FilePanel() {
           ['--fp-col-time' as string]: `${allocated.time}px`,
         }}
         onKeyDown={(event) => {
+          const active = document.activeElement as HTMLElement | null;
+          // Never steal clipboard shortcuts from the editor or text fields.
+          if (
+            active?.closest('.cm-editor')
+            || active?.closest('.editor-float')
+            || active?.closest('input, textarea, select, [contenteditable="true"]')
+          ) {
+            return;
+          }
+          if (!listRef.current?.contains(active)) return;
+
           const mod = event.ctrlKey || event.metaKey;
           const file = files.find((item) => item.filename === selected);
           if (mod && event.key.toLowerCase() === 'v') {

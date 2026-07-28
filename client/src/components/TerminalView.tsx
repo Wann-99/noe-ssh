@@ -336,7 +336,16 @@ export function TerminalView({ visible }: { visible: boolean }) {
 
   useEffect(() => {
     if (!visible) return;
+    const editingTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return Boolean(
+        el?.closest?.('.cm-editor')
+        || el?.closest?.('.editor-float')
+        || el?.closest?.('input, textarea, select, [contenteditable="true"]'),
+      );
+    };
     const onKey = (e: KeyboardEvent) => {
+      if (editingTarget(e.target) || editingTarget(document.activeElement)) return;
       if (e.ctrlKey && e.key === 'f') {
         e.preventDefault();
         setSearchOpen(true);
@@ -365,13 +374,27 @@ export function TerminalView({ visible }: { visible: boolean }) {
       const key = activeKeyRef.current;
       if (key) entriesRef.current.get(key)?.term.clear();
     };
+    const onClearSession = (ev: Event) => {
+      const sessionId = String((ev as CustomEvent).detail?.sessionId || '');
+      if (!sessionId) return;
+      const prefix = `${sessionId}::`;
+      for (const [key, entry] of entriesRef.current) {
+        if (!key.startsWith(prefix)) continue;
+        entry.term.clear();
+        pendingCreatesRef.current.delete(key);
+        inactivePendingRef.current.delete(key);
+        writeBatchRef.current.delete(key);
+      }
+    };
     window.addEventListener('keydown', onKey);
     window.addEventListener('ssh-term-toggle-search', onToggleSearch);
     window.addEventListener('ssh-term-clear', onClear);
+    window.addEventListener('ssh-term-clear-session', onClearSession);
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('ssh-term-toggle-search', onToggleSearch);
       window.removeEventListener('ssh-term-clear', onClear);
+      window.removeEventListener('ssh-term-clear-session', onClearSession);
     };
   }, [visible, fitPane, setFontSize]);
 

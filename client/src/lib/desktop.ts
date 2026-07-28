@@ -30,6 +30,9 @@ export type DesktopEditorChildMessage =
   | { type: 'os-closed'; id: string };
 
 export type NoeDesktopApi = {
+  lifecycle?: {
+    onWillClose: (handler: () => void) => () => void;
+  };
   updater: {
     check: () => Promise<{ ok: boolean }>;
     download: () => Promise<{ ok: boolean }>;

@@ -168,6 +168,12 @@ function createWindow() {
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
+      // Ask renderer to drop SSH sessions before hiding to tray.
+      try {
+        mainWindow.webContents.send('app:will-close');
+      } catch {
+        /* ignore */
+      }
       mainWindow.hide();
     }
   });
@@ -214,8 +220,19 @@ function buildAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([editMenu]));
 }
 
+function notifyRendererClosing() {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:will-close');
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function quitApp() {
   isQuitting = true;
+  notifyRendererClosing();
   stopServer();
   try {
     if (tray) {
@@ -302,6 +319,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  notifyRendererClosing();
   stopServer();
 });
 
