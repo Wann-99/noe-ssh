@@ -20,8 +20,8 @@ export type WsBinKind = (typeof WS_BIN_KIND)[keyof typeof WS_BIN_KIND];
 export const TRANSFER_CHUNK_SIZE = 256 * 1024;
 export const WS_BUFFER_HIGH = 1.5 * 1024 * 1024;
 export const WS_BUFFER_LOW = 512 * 1024;
-/** Keep interactive echo snappy; bulk output still coalesces by byte threshold. */
-export const TERM_COALESCE_MS = 2;
+/** Bulk output coalesce window; interactive small chunks flush immediately on the server. */
+export const TERM_COALESCE_MS = 8;
 export const TERM_COALESCE_BYTES = 32 * 1024;
 export const PROGRESS_THROTTLE_MS = 200;
 export const INACTIVE_PENDING_MAX = 64 * 1024;

@@ -121,11 +121,9 @@ function attachWsHub(server) {
         flushTermOut(sessionId, tid);
         return;
       }
-      // Small interactive echo: flush on next tick instead of waiting coalesce window.
-      if (buf.chunks.length === 1 && piece.length <= 256) {
-        if (!buf.timer) {
-          buf.timer = setImmediate(() => flushTermOut(sessionId, tid));
-        }
+      // Interactive echo: flush immediately so typing RTT is not padded by timers.
+      if (buf.chunks.length === 1 && piece.length <= 512) {
+        flushTermOut(sessionId, tid);
         return;
       }
       if (!buf.timer) {

@@ -5,6 +5,7 @@ import {
   encodeFrame,
   decodeFrame,
 } from '@shared/wsBinary';
+import { emitTermWrite } from './termBridge';
 
 type Handler = (msg: Record<string, unknown>) => void;
 type BinaryHandler = (frame: {
@@ -91,13 +92,11 @@ export class SshSocket {
           const frame = decodeFrame(ev.data as ArrayBuffer);
           if (!frame) return;
           if (frame.kind === WS_BIN_KIND.TERM_OUT) {
-            window.dispatchEvent(new CustomEvent('ssh-term-write', {
-              detail: {
-                sessionId: frame.sessionId,
-                terminalId: frame.transferId || DEFAULT_TERMINAL_ID,
-                data: frame.payload,
-              },
-            }));
+            emitTermWrite(
+              frame.sessionId,
+              frame.transferId || DEFAULT_TERMINAL_ID,
+              frame.payload,
+            );
             return;
           }
           this.emitBinary(frame);

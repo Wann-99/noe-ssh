@@ -18,8 +18,8 @@ const WS_BIN_KIND = {
 const TRANSFER_CHUNK_SIZE = 256 * 1024;
 const WS_BUFFER_HIGH = 1.5 * 1024 * 1024;
 const WS_BUFFER_LOW = 512 * 1024;
-/** Keep interactive echo snappy; bulk output still coalesces by byte threshold. */
-const TERM_COALESCE_MS = 2;
+/** Bulk output coalesce window; interactive small chunks flush immediately on the server. */
+const TERM_COALESCE_MS = 8;
 const TERM_COALESCE_BYTES = 32 * 1024;
 const PROGRESS_THROTTLE_MS = 200;
 

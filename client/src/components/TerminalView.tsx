@@ -3,7 +3,6 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
 import {
   ChevronDown,
   ChevronUp,
@@ -13,14 +12,18 @@ import {
 import '@xterm/xterm/css/xterm.css';
 import { DEFAULT_TERMINAL_ID } from '@shared/protocol';
 import { INACTIVE_PENDING_MAX } from '@shared/wsBinary';
+import { setTermWriteHandler } from '../lib/termBridge';
 import { useAppStore } from '../store/appStore';
 
 /** Sync-write threshold for interactive echo; larger bursts still use rAF. */
-const SYNC_WRITE_MAX = 512;
+const SYNC_WRITE_MAX = 2048;
+const FIT_THROTTLE_MS = 80;
 
 /** Glass workbench terminal theme — electric blue accent */
 const FRESH_THEME = {
-  background: 'rgba(12, 16, 24, 0.2)',
+  // Keep slight transparency for the glass look, but avoid near-zero alpha
+  // which makes glyph edges muddy under compositing.
+  background: 'rgba(12, 16, 24, 0.55)',
   foreground: '#e8eef7',
   cursor: '#60a5fa',
   cursorAccent: '#0c1018',
@@ -49,7 +52,6 @@ type TerminalEntry = {
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
-  webgl: WebglAddon | null;
   disposables: Array<{ dispose: () => void }>;
 };
 
@@ -75,6 +77,8 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
   const writeBatchRef = useRef(new Map<string, WriteChunk[]>());
   const rafRef = useRef<number | null>(null);
   const activeKeyRef = useRef<string | null>(null);
+  const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastResizeRef = useRef(new Map<string, string>());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   // Topology-only subscription: ignore file list / progress / editor noise.
@@ -191,11 +195,26 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
     try {
       entry.fit.fit();
       const dims = entry.fit.proposeDimensions();
-      if (dims) useAppStore.getState().sendResize(dims.cols, dims.rows, sessionId, terminalId);
+      if (!dims) return;
+      const sig = `${dims.cols}x${dims.rows}`;
+      if (lastResizeRef.current.get(key) === sig) return;
+      lastResizeRef.current.set(key, sig);
+      useAppStore.getState().sendResize(dims.cols, dims.rows, sessionId, terminalId);
     } catch {
       // The host can be between layout states during a splitter drag.
     }
   }, [visible]);
+
+  const scheduleFitActive = useCallback(() => {
+    if (fitTimerRef.current != null) return;
+    fitTimerRef.current = setTimeout(() => {
+      fitTimerRef.current = null;
+      const state = useAppStore.getState();
+      const sid = state.activeSessionId;
+      const sess = state.sessions.find((item) => item.id === sid);
+      if (sid && sess?.activeTerminalId) fitPane(sid, sess.activeTerminalId);
+    }, FIT_THROTTLE_MS);
+  }, [fitPane]);
 
   const createTerminal = useCallback((sessionId: string, terminalId: string, host: HTMLDivElement) => {
     const key = termKey(sessionId, terminalId);
@@ -218,8 +237,11 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
       allowProposedApi: true,
       scrollback: 5_000,
       smoothScrollDuration: 0,
-      minimumContrastRatio: 4.5,
+      // Theme colors already meet contrast; per-cell correction is a hot-path cost.
+      minimumContrastRatio: 1,
       rightClickSelectsWord: true,
+      letterSpacing: 0,
+      lineHeight: 1.2,
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -227,18 +249,8 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon());
     term.open(host);
-
-    let webgl: WebglAddon | null = null;
-    try {
-      webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        try { webgl?.dispose(); } catch { /* ignore */ }
-        webgl = null;
-      });
-      term.loadAddon(webgl);
-    } catch {
-      webgl = null;
-    }
+    // Use DOM renderer: WebGL atlas + transparent glass backgrounds caused
+    // horizontal glyph tearing / moiré on many Linux / HiDPI desktops.
 
     const copySelection = () => {
       const text = term.getSelection();
@@ -316,7 +328,7 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
       { dispose: () => host.removeEventListener('contextmenu', onContextMenu) },
       { dispose: () => host.querySelector('.term-context-menu')?.remove() },
     ];
-    entriesRef.current.set(key, { term, fit, search, webgl, disposables });
+    entriesRef.current.set(key, { term, fit, search, disposables });
     term.writeln('\x1b[90m会话已就绪\x1b[0m');
     const pending = pendingCreatesRef.current.get(key);
     if (pending?.length) {
@@ -329,7 +341,6 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
     const entry = entriesRef.current.get(key);
     if (!entry) return;
     entry.disposables.forEach((disposable) => disposable.dispose());
-    try { entry.webgl?.dispose(); } catch { /* ignore */ }
     entry.term.dispose();
     entriesRef.current.delete(key);
     pendingCreatesRef.current.delete(key);
@@ -351,16 +362,10 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
   }, [panes, createTerminal, disposeEntry]);
 
   useEffect(() => {
-    const onWrite = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail as {
-        sessionId: string;
-        terminalId?: string;
-        data: WriteChunk;
-      };
-      enqueueWrite(detail.sessionId, detail.terminalId || DEFAULT_TERMINAL_ID, detail.data);
-    };
-    window.addEventListener('ssh-term-write', onWrite);
-    return () => window.removeEventListener('ssh-term-write', onWrite);
+    setTermWriteHandler((sessionId, terminalId, data) => {
+      enqueueWrite(sessionId, terminalId || DEFAULT_TERMINAL_ID, data);
+    });
+    return () => setTermWriteHandler(null);
   }, [enqueueWrite]);
 
   useEffect(() => {
@@ -444,25 +449,24 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
   useEffect(() => {
     const root = hostRef.current;
     if (!root) return;
-    const fitActive = () => {
-      const state = useAppStore.getState();
-      const sid = state.activeSessionId;
-      const sess = state.sessions.find((item) => item.id === sid);
-      if (sid && sess?.activeTerminalId) fitPane(sid, sess.activeTerminalId);
-    };
-    const observer = new ResizeObserver(fitActive);
+    const observer = new ResizeObserver(scheduleFitActive);
     observer.observe(root);
-    window.addEventListener('resize', fitActive);
-    window.addEventListener('ssh-layout-resize', fitActive);
+    window.addEventListener('resize', scheduleFitActive);
+    window.addEventListener('ssh-layout-resize', scheduleFitActive);
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', fitActive);
-      window.removeEventListener('ssh-layout-resize', fitActive);
+      window.removeEventListener('resize', scheduleFitActive);
+      window.removeEventListener('ssh-layout-resize', scheduleFitActive);
+      if (fitTimerRef.current != null) {
+        clearTimeout(fitTimerRef.current);
+        fitTimerRef.current = null;
+      }
     };
-  }, [fitPane]);
+  }, [scheduleFitActive]);
 
   useEffect(() => () => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    if (fitTimerRef.current != null) clearTimeout(fitTimerRef.current);
     for (const key of [...entriesRef.current.keys()]) disposeEntry(key);
   }, [disposeEntry]);
 

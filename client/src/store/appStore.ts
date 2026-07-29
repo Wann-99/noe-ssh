@@ -24,6 +24,7 @@ import {
   joinRemotePath,
   uniqueRemoteName,
 } from '../lib/remoteFileOps';
+import { emitTermWrite as emitTermWriteBridge } from '../lib/termBridge';
 
 const termInEncoder = new TextEncoder();
 let editorContentRaf: number | null = null;
@@ -334,13 +335,7 @@ function dropTerminalPane(session: SessionState, terminalId: string) {
 }
 
 function emitTermWrite(sessionId: string, data: string | Uint8Array, terminalId?: string) {
-  window.dispatchEvent(new CustomEvent('ssh-term-write', {
-    detail: {
-      sessionId,
-      terminalId: terminalId || DEFAULT_TERMINAL_ID,
-      data,
-    },
-  }));
+  emitTermWriteBridge(sessionId, terminalId || DEFAULT_TERMINAL_ID, data);
 }
 
 function emitTermClearSession(sessionId: string) {
