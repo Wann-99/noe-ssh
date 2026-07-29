@@ -6,8 +6,14 @@ import { EditorFloat } from './EditorFloat';
 import { TerminalView } from './TerminalView';
 
 export function Workspace() {
-  const sessions = useAppStore((state) => state.sessions);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
+  const sessionStatus = useAppStore((state) =>
+    state.sessions.find((item) => item.id === state.activeSessionId)?.status);
+  const termTabsKey = useAppStore((state) => {
+    const session = state.sessions.find((item) => item.id === state.activeSessionId);
+    if (!session) return '';
+    return `${session.activeTerminalId || ''}:${session.terminals.map((pane) => `${pane.id}:${pane.title}`).join(',')}`;
+  });
   const editors = useAppStore((state) => state.editors);
   const setActiveEditor = useAppStore((state) => state.setActiveEditor);
   const setEditorContent = useAppStore((state) => state.setEditorContent);
@@ -30,7 +36,13 @@ export function Workspace() {
   const stashBtnRef = useRef<HTMLButtonElement>(null);
   const stashPanelRef = useRef<HTMLDivElement>(null);
 
-  const session = sessions.find((item) => item.id === activeSessionId);
+  const { terminals, activeTerminalId } = useMemo(() => {
+    const session = useAppStore.getState().sessions.find((item) => item.id === activeSessionId);
+    return {
+      terminals: session?.terminals || [],
+      activeTerminalId: session?.activeTerminalId || null,
+    };
+  }, [termTabsKey, activeSessionId]);
   const sessionEditors = useMemo(
     () => editors.filter((editor) => editor.sessionId === activeSessionId),
     [editors, activeSessionId],
@@ -44,8 +56,6 @@ export function Workspace() {
     () => sessionEditors.filter((editor) => editor.minimized),
     [sessionEditors],
   );
-  const terminals = session?.terminals || [];
-  const activeTerminalId = session?.activeTerminalId;
 
   useLayoutEffect(() => {
     if (!stashOpen || !stashBtnRef.current) {
@@ -162,7 +172,7 @@ export function Workspace() {
           className="workbench-tab-add"
           title="新建终端"
           aria-label="新建终端"
-          disabled={!session || session.status !== 'ready'}
+          disabled={sessionStatus !== 'ready'}
           onClick={() => openTerminal(activeSessionId || undefined)}
         >
           <Plus size={15} />

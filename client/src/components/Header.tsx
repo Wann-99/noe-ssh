@@ -46,15 +46,33 @@ export function Header({
   onOpenUpdate?: () => void;
 }) {
   const isDesktop = Boolean(getDesktopApi());
-  const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const sessStatus = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.status);
+  const sessHost = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.host);
+  const sessUsername = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.username);
+  const sessPort = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.port);
+  const sessSftpStatus = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.sftpStatus);
+  const sessStartedAt = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.startedAt ?? null);
+  const sessLabel = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.label);
+  const sessError = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.error ?? null);
+  const sess = sessStatus
+    ? {
+        status: sessStatus,
+        host: sessHost,
+        username: sessUsername,
+        port: sessPort,
+        sftpStatus: sessSftpStatus,
+        startedAt: sessStartedAt,
+        label: sessLabel,
+        error: sessError,
+      }
+    : undefined;
   const lockVault = useAppStore((s) => s.lockVault);
   const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
   const user = useAppStore((s) => s.user);
   const authRequired = useAppStore((s) => s.authRequired);
   const logout = useAppStore((s) => s.logout);
   const setShowAdmin = useAppStore((s) => s.setShowAdmin);
-  const sess = sessions.find((s) => s.id === activeSessionId);
   const [elapsed, setElapsed] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [menuSection, setMenuSection] = useState<MenuSection>(null);

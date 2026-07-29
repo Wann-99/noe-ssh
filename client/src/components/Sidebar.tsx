@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bookmark, Code2, History, Plug, Server } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { ConnectForm } from './ConnectForm';
@@ -94,6 +94,18 @@ export function Sidebar() {
   const sess = sessions.find((s) => s.id === activeSessionId);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftCmd, setDraftCmd] = useState('');
+  const addNameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    setDraftName('');
+    setDraftCmd('');
+    const id = requestAnimationFrame(() => addNameRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [addOpen]);
 
   const reorderSnippets = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= snippets.length || to >= snippets.length) return;
@@ -239,14 +251,68 @@ export function Sidebar() {
             <button
               type="button"
               className="btn btn-primary btn-block"
-              onClick={() => {
-                const name = prompt('片段名称');
-                const cmd = prompt('命令');
-                if (name && cmd) setSnippets([...snippets, { name, cmd }]);
-              }}
+              onClick={() => setAddOpen(true)}
             >
               添加片段
             </button>
+            {addOpen && (
+              <div className="dialog-backdrop" role="presentation" onClick={() => setAddOpen(false)}>
+                <form
+                  className="dialog-card"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="add-snippet-title"
+                  onClick={(event) => event.stopPropagation()}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const name = draftName.trim();
+                    const cmd = draftCmd.trim();
+                    if (!name || !cmd) return;
+                    setSnippets([...snippets, { name, cmd }]);
+                    setAddOpen(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      setAddOpen(false);
+                    }
+                  }}
+                >
+                  <h2 id="add-snippet-title">添加片段</h2>
+                  <label className="field">
+                    <span>名称</span>
+                    <input
+                      ref={addNameRef}
+                      className="input"
+                      value={draftName}
+                      onChange={(event) => setDraftName(event.target.value)}
+                      placeholder="例如：查看磁盘"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>命令</span>
+                    <input
+                      className="input"
+                      value={draftCmd}
+                      onChange={(event) => setDraftCmd(event.target.value)}
+                      placeholder="例如：df -h"
+                    />
+                  </label>
+                  <div className="dialog-actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setAddOpen(false)}>
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={!draftName.trim() || !draftCmd.trim()}
+                    >
+                      添加
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
           </div>
         )}
         {tab === 'server' && (

@@ -91,8 +91,9 @@ type DialogState = {
 } | null;
 
 export function FilePanel() {
-  const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  // Subscribe only to the active session object identity (patched in place via new session refs).
+  const sess = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId));
   const listFiles = useAppStore((s) => s.listFiles);
   const mkdir = useAppStore((s) => s.mkdir);
   const createFile = useAppStore((s) => s.createFile);
@@ -106,7 +107,6 @@ export function FilePanel() {
   const pasteRemote = useAppStore((s) => s.pasteRemote);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
   const notify = useAppStore((s) => s.notify);
-  const sess = sessions.find((s) => s.id === activeSessionId);
   const [filter, setFilter] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [sort, setSort] = useState<'name' | 'size' | 'mtime'>('name');

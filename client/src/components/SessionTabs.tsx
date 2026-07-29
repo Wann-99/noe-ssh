@@ -1,12 +1,23 @@
+import { useMemo } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 
 export function SessionTabs() {
-  const sessions = useAppStore((s) => s.sessions);
+  // Only re-render when tab identity/label/status changes — not on every file list tick.
+  const tabsKey = useAppStore((s) =>
+    s.sessions.map((session) => `${session.id}\0${session.label}\0${session.status}`).join('|'));
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
   const createSession = useAppStore((s) => s.createSession);
   const closeSession = useAppStore((s) => s.closeSession);
+  const sessions = useMemo(
+    () => useAppStore.getState().sessions.map((session) => ({
+      id: session.id,
+      label: session.label,
+      status: session.status,
+    })),
+    [tabsKey],
+  );
 
   return (
     <div className="session-tabs">

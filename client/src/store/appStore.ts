@@ -25,6 +25,10 @@ import {
   uniqueRemoteName,
 } from '../lib/remoteFileOps';
 
+const termInEncoder = new TextEncoder();
+let editorContentRaf: number | null = null;
+let pendingEditorContent: { id: string; content: string } | null = null;
+
 export type FileClipboard = {
   sessionId: string;
   mode: 'copy' | 'cut';
@@ -883,7 +887,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!id) return;
     const sess = get().sessions.find((item) => item.id === id);
     const tid = resolveTerminalId(sess, terminalId);
-    sshSocket.send({ type: MSG.INPUT, sessionId: id, terminalId: tid, data });
+    // Binary TERM_IN avoids per-keystroke JSON.stringify on the hot path.
+    if (!sshSocket.sendBinary(WS_BIN_KIND.TERM_IN, id, tid, termInEncoder.encode(data))) {
+      sshSocket.send({ type: MSG.INPUT, sessionId: id, terminalId: tid, data });
+    }
   },
 
   sendResize: (cols, rows, sessionId, terminalId) => {
@@ -1381,17 +1388,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setEditorContent: (editorId, content) => {
-    set({
-      editors: get().editors.map((editor) => (
-        editor.id === editorId
-          ? {
-              ...editor,
-              content,
-              size: new Blob([content]).size,
-              dirty: content !== editor.original,
-            }
-          : editor
-      )),
+    pendingEditorContent = { id: editorId, content };
+    if (editorContentRaf != null) return;
+    editorContentRaf = requestAnimationFrame(() => {
+      editorContentRaf = null;
+      const pending = pendingEditorContent;
+      pendingEditorContent = null;
+      if (!pending) return;
+      set({
+        editors: get().editors.map((editor) => (
+          editor.id === pending.id
+            ? {
+                ...editor,
+                content: pending.content,
+                // Avoid per-keystroke Blob allocation; size refreshes on save/open.
+                dirty: pending.content !== editor.original,
+              }
+            : editor
+        )),
+      });
     });
   },
 

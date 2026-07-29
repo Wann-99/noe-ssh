@@ -121,6 +121,13 @@ function attachWsHub(server) {
         flushTermOut(sessionId, tid);
         return;
       }
+      // Small interactive echo: flush on next tick instead of waiting coalesce window.
+      if (buf.chunks.length === 1 && piece.length <= 256) {
+        if (!buf.timer) {
+          buf.timer = setImmediate(() => flushTermOut(sessionId, tid));
+        }
+        return;
+      }
       if (!buf.timer) {
         buf.timer = setTimeout(() => flushTermOut(sessionId, tid), TERM_COALESCE_MS);
       }
@@ -343,11 +350,22 @@ function attachWsHub(server) {
       }
     };
 
+    const writeTermIn = (sessionId, terminalId, payload) => {
+      const sess = getSession(sessionId);
+      const stream = resolveShell(sess, terminalId);
+      if (!stream) return;
+      stream.write(Buffer.isBuffer(payload) ? payload : Buffer.from(payload));
+    };
+
     const handleBinaryMessage = async (raw) => {
       const frame = decodeFrame(raw);
       if (!frame) return;
       if (needsAuth && !authCtx) {
         send(ws, { type: MSG.AUTH_REQUIRED, data: 'Authentication required' });
+        return;
+      }
+      if (frame.kind === WS_BIN_KIND.TERM_IN) {
+        writeTermIn(frame.sessionId, frame.transferId || DEFAULT_TERMINAL_ID, frame.payload);
         return;
       }
       if (frame.kind === WS_BIN_KIND.UPLOAD_CHUNK) {
@@ -356,6 +374,20 @@ function attachWsHub(server) {
     };
 
     ws.on('message', (raw, isBinary) => {
+      // Terminal input bypasses the upload chain so typing stays responsive
+      // while large SFTP transfers are in flight.
+      if (isBinary) {
+        const frame = decodeFrame(raw);
+        if (frame && frame.kind === WS_BIN_KIND.TERM_IN) {
+          if (needsAuth && !authCtx) {
+            send(ws, { type: MSG.AUTH_REQUIRED, data: 'Authentication required' });
+            return;
+          }
+          writeTermIn(frame.sessionId, frame.transferId || DEFAULT_TERMINAL_ID, frame.payload);
+          return;
+        }
+      }
+
       inboundChain = inboundChain
         .then(async () => {
           if (isBinary) {

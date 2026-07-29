@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import {
   ChevronDown,
   ChevronUp,
@@ -13,6 +14,9 @@ import '@xterm/xterm/css/xterm.css';
 import { DEFAULT_TERMINAL_ID } from '@shared/protocol';
 import { INACTIVE_PENDING_MAX } from '@shared/wsBinary';
 import { useAppStore } from '../store/appStore';
+
+/** Sync-write threshold for interactive echo; larger bursts still use rAF. */
+const SYNC_WRITE_MAX = 512;
 
 /** Glass workbench terminal theme — electric blue accent */
 const FRESH_THEME = {
@@ -45,8 +49,11 @@ type TerminalEntry = {
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
+  webgl: WebglAddon | null;
   disposables: Array<{ dispose: () => void }>;
 };
+
+type TermPaneRef = { sessionId: string; terminalId: string; active: boolean };
 
 function termKey(sessionId: string, terminalId: string) {
   return `${sessionId}::${terminalId}`;
@@ -56,7 +63,7 @@ function chunkByteLength(chunk: WriteChunk) {
   return typeof chunk === 'string' ? chunk.length : chunk.byteLength;
 }
 
-export function TerminalView({ visible }: { visible: boolean }) {
+export const TerminalView = memo(function TerminalView({ visible }: { visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termHostsRef = useRef(new Map<string, HTMLDivElement>());
   const entriesRef = useRef(new Map<string, TerminalEntry>());
@@ -70,15 +77,33 @@ export function TerminalView({ visible }: { visible: boolean }) {
   const activeKeyRef = useRef<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const sessions = useAppStore((s) => s.sessions);
+  // Topology-only subscription: ignore file list / progress / editor noise.
+  const termLayoutKey = useAppStore((s) => s.sessions
+    .map((session) => (
+      `${session.id}:${session.activeTerminalId || DEFAULT_TERMINAL_ID}:${session.terminals.map((pane) => pane.id).join(',')}`
+    ))
+    .join('|'));
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const activeTerminalId = useAppStore((s) => {
+    const session = s.sessions.find((item) => item.id === s.activeSessionId);
+    return session?.activeTerminalId || DEFAULT_TERMINAL_ID;
+  });
   const termFontSize = useAppStore((s) => s.termFontSize);
   const setFontSize = useAppStore((s) => s.setFontSize);
-  const activeSession = sessions.find((session) => session.id === activeSessionId);
-  const activeTerminalId = activeSession?.activeTerminalId || DEFAULT_TERMINAL_ID;
   activeKeyRef.current = activeSessionId
     ? termKey(activeSessionId, activeTerminalId)
     : null;
+
+  const panes = useMemo<TermPaneRef[]>(() => {
+    const sessions = useAppStore.getState().sessions;
+    return sessions.flatMap((session) =>
+      session.terminals.map((pane) => ({
+        sessionId: session.id,
+        terminalId: pane.id,
+        active: session.id === activeSessionId
+          && pane.id === (session.activeTerminalId || DEFAULT_TERMINAL_ID),
+      })));
+  }, [termLayoutKey, activeSessionId, activeTerminalId]);
 
   const flushBatch = useCallback(() => {
     rafRef.current = null;
@@ -145,7 +170,14 @@ export function TerminalView({ visible }: { visible: boolean }) {
       return;
     }
 
-    const batch = writeBatchRef.current.get(key) || [];
+    // Interactive echo: write immediately instead of waiting for rAF (~16ms).
+    const pending = writeBatchRef.current.get(key);
+    if ((!pending || pending.length === 0) && chunkByteLength(data) <= SYNC_WRITE_MAX) {
+      entry.term.write(data);
+      return;
+    }
+
+    const batch = pending || [];
     batch.push(data);
     writeBatchRef.current.set(key, batch);
     scheduleFlush();
@@ -195,6 +227,18 @@ export function TerminalView({ visible }: { visible: boolean }) {
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon());
     term.open(host);
+
+    let webgl: WebglAddon | null = null;
+    try {
+      webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        try { webgl?.dispose(); } catch { /* ignore */ }
+        webgl = null;
+      });
+      term.loadAddon(webgl);
+    } catch {
+      webgl = null;
+    }
 
     const copySelection = () => {
       const text = term.getSelection();
@@ -272,7 +316,7 @@ export function TerminalView({ visible }: { visible: boolean }) {
       { dispose: () => host.removeEventListener('contextmenu', onContextMenu) },
       { dispose: () => host.querySelector('.term-context-menu')?.remove() },
     ];
-    entriesRef.current.set(key, { term, fit, search, disposables });
+    entriesRef.current.set(key, { term, fit, search, webgl, disposables });
     term.writeln('\x1b[90m会话已就绪\x1b[0m');
     const pending = pendingCreatesRef.current.get(key);
     if (pending?.length) {
@@ -285,6 +329,7 @@ export function TerminalView({ visible }: { visible: boolean }) {
     const entry = entriesRef.current.get(key);
     if (!entry) return;
     entry.disposables.forEach((disposable) => disposable.dispose());
+    try { entry.webgl?.dispose(); } catch { /* ignore */ }
     entry.term.dispose();
     entriesRef.current.delete(key);
     pendingCreatesRef.current.delete(key);
@@ -294,18 +339,16 @@ export function TerminalView({ visible }: { visible: boolean }) {
 
   useEffect(() => {
     const liveKeys = new Set<string>();
-    for (const session of sessions) {
-      for (const pane of session.terminals) {
-        const key = termKey(session.id, pane.id);
-        liveKeys.add(key);
-        const host = termHostsRef.current.get(key);
-        if (host) createTerminal(session.id, pane.id, host);
-      }
+    for (const pane of panes) {
+      const key = termKey(pane.sessionId, pane.terminalId);
+      liveKeys.add(key);
+      const host = termHostsRef.current.get(key);
+      if (host) createTerminal(pane.sessionId, pane.terminalId, host);
     }
     for (const key of [...entriesRef.current.keys()]) {
       if (!liveKeys.has(key)) disposeEntry(key);
     }
-  }, [sessions, createTerminal, disposeEntry]);
+  }, [panes, createTerminal, disposeEntry]);
 
   useEffect(() => {
     const onWrite = (ev: Event) => {
@@ -500,31 +543,28 @@ export function TerminalView({ visible }: { visible: boolean }) {
         </div>
       )}
       <div className="terminal-host" ref={hostRef}>
-        {sessions.flatMap((session) =>
-          session.terminals.map((pane) => {
-            const key = termKey(session.id, pane.id);
-            const active = session.id === activeSessionId && pane.id === (session.activeTerminalId || DEFAULT_TERMINAL_ID);
-            return (
-              <div
-                key={key}
-                className={`terminal-session ${active ? 'active' : ''}`}
-                aria-hidden={!active}
-                onMouseDown={() => {
-                  if (active) entriesRef.current.get(key)?.term.focus();
-                }}
-                ref={(node) => {
-                  if (node) {
-                    termHostsRef.current.set(key, node);
-                    createTerminal(session.id, pane.id, node);
-                  } else {
-                    termHostsRef.current.delete(key);
-                  }
-                }}
-              />
-            );
-          }),
-        )}
+        {panes.map((pane) => {
+          const key = termKey(pane.sessionId, pane.terminalId);
+          return (
+            <div
+              key={key}
+              className={`terminal-session ${pane.active ? 'active' : ''}`}
+              aria-hidden={!pane.active}
+              onMouseDown={() => {
+                if (pane.active) entriesRef.current.get(key)?.term.focus();
+              }}
+              ref={(node) => {
+                if (node) {
+                  termHostsRef.current.set(key, node);
+                  createTerminal(pane.sessionId, pane.terminalId, node);
+                } else {
+                  termHostsRef.current.delete(key);
+                }
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
-}
+});
