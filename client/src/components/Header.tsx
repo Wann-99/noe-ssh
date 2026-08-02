@@ -2,23 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
-  ChevronRight,
-  Image,
-  Keyboard,
-  LockKeyhole,
   LogOut,
   Fullscreen,
   Minimize2,
-  RefreshCw,
-  Settings,
   Shield,
-  ShieldCheck,
 } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
-import { hasVault } from '../lib/crypto';
-import { getDesktopApi } from '../lib/desktop';
-
-type MenuSection = 'settings' | 'security' | null;
 
 function isDocumentFullscreen() {
   return Boolean(document.fullscreenElement);
@@ -32,21 +21,7 @@ async function toggleDocumentFullscreen() {
   await document.documentElement.requestFullscreen();
 }
 
-export function Header({
-  onOpenBg,
-  onOpenShortcuts,
-  onSetupVault,
-  onUnlockVault,
-  onOpenUpdate,
-}: {
-  onOpenBg: () => void;
-  onOpenShortcuts: () => void;
-  onSetupVault: () => void;
-  onUnlockVault: () => void;
-  onOpenUpdate?: () => void;
-}) {
-  const isDesktop = Boolean(getDesktopApi());
-  const activeSessionId = useAppStore((s) => s.activeSessionId);
+export function Header() {
   const sessStatus = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.status);
   const sessHost = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.host);
   const sessUsername = useAppStore((s) => s.sessions.find((item) => item.id === s.activeSessionId)?.username);
@@ -67,15 +42,12 @@ export function Header({
         error: sessError,
       }
     : undefined;
-  const lockVault = useAppStore((s) => s.lockVault);
-  const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
   const user = useAppStore((s) => s.user);
   const authRequired = useAppStore((s) => s.authRequired);
   const logout = useAppStore((s) => s.logout);
   const setShowAdmin = useAppStore((s) => s.setShowAdmin);
   const [elapsed, setElapsed] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [menuSection, setMenuSection] = useState<MenuSection>(null);
   const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
   const [fullscreen, setFullscreen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -125,13 +97,10 @@ export function Header({
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
     };
-  }, [userMenuOpen, menuSection]);
+  }, [userMenuOpen]);
 
   useEffect(() => {
-    if (!userMenuOpen) {
-      setMenuSection(null);
-      return;
-    }
+    if (!userMenuOpen) return;
     const onPointer = (event: PointerEvent) => {
       const target = event.target as Node;
       if (userMenuRef.current?.contains(target) || userBtnRef.current?.contains(target)) return;
@@ -162,9 +131,6 @@ export function Header({
           : '未连接';
 
   const closeMenu = () => setUserMenuOpen(false);
-  const toggleSection = (section: Exclude<MenuSection, null>) => {
-    setMenuSection((cur) => (cur === section ? null : section));
-  };
 
   const menu = userMenuOpen && createPortal(
     <div
@@ -185,136 +151,30 @@ export function Header({
         </div>
       )}
 
-      <button
-        type="button"
-        role="menuitem"
-        className="menu-group-toggle"
-        aria-expanded={menuSection === 'settings'}
-        onClick={() => toggleSection('settings')}
-      >
-        <Settings size={14} />
-        <span>设置</span>
-        {menuSection === 'settings' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-      </button>
-      {menuSection === 'settings' && (
-        <div className="menu-sub">
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              closeMenu();
-              onOpenShortcuts();
-            }}
-          >
-            <Keyboard size={14} />快捷键
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              closeMenu();
-              onOpenBg();
-            }}
-          >
-            <Image size={14} />背景
-          </button>
-          {isDesktop && onOpenUpdate && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onOpenUpdate();
-              }}
-            >
-              <RefreshCw size={14} />检查更新
-            </button>
-          )}
-        </div>
-      )}
-
-      <button
-        type="button"
-        role="menuitem"
-        className="menu-group-toggle"
-        aria-expanded={menuSection === 'security'}
-        onClick={() => toggleSection('security')}
-      >
-        <ShieldCheck size={14} />
-        <span>安全</span>
-        {menuSection === 'security' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-      </button>
-      {menuSection === 'security' && (
-        <div className="menu-sub">
-          {!hasVault() && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onSetupVault();
-              }}
-            >
-              <ShieldCheck size={14} />密码库
-            </button>
-          )}
-          {hasVault() && vaultUnlocked && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                lockVault();
-              }}
-            >
-              <LockKeyhole size={14} />锁定密码库
-            </button>
-          )}
-          {hasVault() && !vaultUnlocked && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                onUnlockVault();
-              }}
-            >
-              <LockKeyhole size={14} />解锁密码库
-            </button>
-          )}
-        </div>
-      )}
-
       {user?.role === 'admin' && (
-        <>
-          <div className="menu-sep" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              closeMenu();
-              setShowAdmin(true);
-            }}
-          >
-            <Shield size={14} />管理后台
-          </button>
-        </>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            closeMenu();
+            setShowAdmin(true);
+          }}
+        >
+          <Shield size={14} />管理后台
+        </button>
       )}
       {authRequired && (
-        <>
-          <div className="menu-sep" />
-          <button
-            type="button"
-            role="menuitem"
-            className="danger"
-            onClick={() => {
-              closeMenu();
-              void logout();
-            }}
-          >
-            <LogOut size={14} />退出
-          </button>
-        </>
+        <button
+          type="button"
+          role="menuitem"
+          className="danger"
+          onClick={() => {
+            closeMenu();
+            void logout();
+          }}
+        >
+          <LogOut size={14} />退出
+        </button>
       )}
     </div>,
     document.body,

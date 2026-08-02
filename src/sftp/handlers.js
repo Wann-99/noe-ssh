@@ -397,6 +397,8 @@ module.exports = {
   rename,
   remove,
   previewFile,
+  stat,
+  pathExists,
   writeFile,
   createUploadStream,
   createDownloadStream,

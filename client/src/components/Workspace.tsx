@@ -5,7 +5,7 @@ import { useAppStore } from '../store/appStore';
 import { EditorFloat } from './EditorFloat';
 import { TerminalView } from './TerminalView';
 
-export function Workspace() {
+export function Workspace({ visible = true }: { visible?: boolean }) {
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessionStatus = useAppStore((state) =>
     state.sessions.find((item) => item.id === state.activeSessionId)?.status);
@@ -25,7 +25,7 @@ export function Workspace() {
   const setActiveTerminal = useAppStore((state) => state.setActiveTerminal);
   const openTerminal = useAppStore((state) => state.openTerminal);
   const closeTerminal = useAppStore((state) => state.closeTerminal);
-  const toggleFilePanel = useAppStore((state) => state.toggleFilePanel);
+  const setActivePage = useAppStore((state) => state.setActivePage);
 
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [stashOpen, setStashOpen] = useState(false);
@@ -200,9 +200,17 @@ export function Workspace() {
           <button
             type="button"
             className="icon-button"
-            title="切换文件面板"
-            aria-label="切换文件面板"
-            onClick={toggleFilePanel}
+            title="打开文件页"
+            aria-label="打开文件页"
+            onClick={() => {
+              // The files view follows the terminal you came from (right pane).
+              if (activeSessionId) {
+                useAppStore.setState((s) => ({
+                  filesPanes: { ...s.filesPanes, right: { target: activeSessionId } },
+                }));
+              }
+              setActivePage('files');
+            }}
           >
             <Files size={15} />
           </button>
@@ -275,7 +283,7 @@ export function Workspace() {
 
       <div className="workbench-surface">
         <div className="terminal-layer">
-          <TerminalView visible />
+          <TerminalView visible={visible} />
         </div>
 
         <div className="editor-float-layer" aria-live="polite">

@@ -38,6 +38,24 @@ export type FileClipboard = {
   isDir: boolean;
 };
 
+export type PaneSide = 'left' | 'right';
+/** Files-pane target: 'local' = server host filesystem, otherwise a session id. */
+export type FilesPaneTarget = 'local' | string;
+
+export type LocalPaneState = {
+  path: string | null;
+  files: RemoteFile[];
+  listLoading: boolean;
+  listRequestId: string | null;
+};
+
+export type PaneTransferState = {
+  id: string;
+  written: number;
+  total: number;
+  file: string | null;
+};
+
 type DownloadBuf = {
   parts: BlobPart[];
   filename: string;
@@ -49,6 +67,11 @@ type DownloadBuf = {
 
 /** Out-of-store download buffers to avoid Zustand churn / base64 copies. */
 const downloadBuffers = new Map<string, DownloadBuf>();
+
+/** Local-pane mutating op id -> owning pane (results echo only the id). */
+const pendingLocalOps = new Map<string, PaneSide>();
+/** Cross-endpoint transfer id -> destination pane. */
+const pendingPaneTransfers = new Map<string, PaneSide>();
 
 function clearTransfersForSession(sessionId: string) {
   for (const [id, buf] of [...downloadBuffers.entries()]) {
@@ -116,6 +139,8 @@ export type SessionState = {
   /** Monotonic counter for "终端 N" titles. */
   terminalSeq: number;
   startedAt: number | null;
+  /** Files-only sessions are hidden from the tab strip and never take focus. */
+  hidden?: boolean;
 };
 
 export type ConnectForm = {
@@ -146,6 +171,15 @@ export type AuthUser = {
   role: 'admin' | 'user';
 };
 
+export type PageId =
+  | 'hosts'
+  | 'terminal'
+  | 'files'
+  | 'snippets'
+  | 'server'
+  | 'logs'
+  | 'settings';
+
 type AppState = {
   accessToken: string;
   authRequired: boolean;
@@ -159,14 +193,21 @@ type AppState = {
   vaultUnlocked: boolean;
   sessions: SessionState[];
   activeSessionId: string | null;
-  sidebarTab: string;
+  /** Dual-pane files page: each side points at 'local' (server host FS) or a session. */
+  filesPanes: Record<PaneSide, { target: FilesPaneTarget | null }>;
+  /** Listing state for panes targeting the server-local filesystem. */
+  localPanes: Record<PaneSide, LocalPaneState>;
+  /** In-flight cross-endpoint copies, keyed by the destination pane. */
+  paneTransfers: Partial<Record<PaneSide, PaneTransferState>>;
+  activePage: PageId;
   termFontSize: number;
-  filePanelOpen: boolean;
   bgUrl: string;
   bgOpacity: number;
   form: ConnectForm;
   snippets: { name: string; cmd: string }[];
   savedConnections: Array<Record<string, unknown>>;
+  /** Saved-connection entry currently being edited in the host drawer. */
+  editingConnectionId: number | null;
   editors: EditorFile[];
   pendingPreviews: Record<string, { sessionId: string; path: string }>;
   pendingCreates: Record<string, { sessionId: string; path: string }>;
@@ -185,18 +226,30 @@ type AppState = {
   unlockMaster: (password: string) => Promise<void>;
   lockVault: () => void;
   setForm: (patch: Partial<ConnectForm>) => void;
-  setSidebarTab: (t: string) => void;
+  resetForm: () => void;
+  setEditingConnection: (id: number | null) => void;
+  setActivePage: (p: PageId) => void;
   setFontSize: (n: number) => void;
-  toggleFilePanel: () => void;
   setBg: (url: string, opacity: number) => void;
   setBgOpacity: (opacity: number) => void;
   clearBg: () => void;
   createSession: () => string;
   setActiveSession: (id: string) => void;
   closeSession: (id: string) => void;
-  connectActive: () => Promise<void>;
+  connectActive: (sessionId?: string) => Promise<void>;
   applySavedConnection: (id: number) => Promise<boolean>;
   connectSaved: (id: number) => Promise<void>;
+  openFilesHost: (savedId: number, side?: PaneSide) => Promise<void>;
+  closeFilesTarget: (side?: PaneSide) => void;
+  setPaneTarget: (side: PaneSide, target: FilesPaneTarget | null) => void;
+  listPane: (side: PaneSide, path?: string) => void;
+  paneTouch: (side: PaneSide, name: string) => void;
+  paneMkdir: (side: PaneSide, name: string) => void;
+  paneRename: (side: PaneSide, from: string, to: string) => void;
+  paneRemove: (side: PaneSide, path: string) => void;
+  /** Copy a file or directory from one pane into the other pane's current dir. */
+  transferToOtherPane: (side: PaneSide, file: RemoteFile) => void;
+  abortPaneTransfer: (side: PaneSide) => void;
   disconnectActive: () => void;
   disconnectAll: () => void;
   sendInput: (data: string, sessionId?: string, terminalId?: string) => void;
@@ -206,21 +259,23 @@ type AppState = {
   closeTerminal: (terminalId: string, sessionId?: string) => void;
   listFiles: (path?: string, sessionId?: string) => void;
   addCmdLog: (type: string, cmd: string, desc: string) => void;
-  saveCurrentConnection: (name: string) => Promise<void>;
+  saveCurrentConnection: (name: string, opts?: { silent?: boolean; preserveName?: boolean }) => Promise<void>;
+  /** Silently upsert the snapshot taken when CONNECT was sent for this session. */
+  autoSaveConnection: (sessionId: string) => Promise<void>;
   deleteSaved: (id: number) => void;
   exportConnections: () => void;
   importConnections: (file: File) => Promise<void>;
   refreshServerInfo: () => void;
   runExec: (command: string, id?: string) => void;
-  mkdir: (name: string) => void;
-  rename: (from: string, to: string) => void;
-  removePath: (path: string) => void;
+  mkdir: (name: string, sessionId?: string) => void;
+  rename: (from: string, to: string, sessionId?: string) => void;
+  removePath: (path: string, sessionId?: string) => void;
   copyRemote: (file: RemoteFile, sessionId?: string) => void;
   cutRemote: (file: RemoteFile, sessionId?: string) => void;
   pasteRemote: (sessionId?: string) => void;
   clearFileClipboard: () => void;
-  previewFile: (path: string) => void;
-  createFile: (name: string) => void;
+  previewFile: (path: string, sessionId?: string) => void;
+  createFile: (name: string, sessionId?: string) => void;
   setActiveEditor: (id: string) => void;
   minimizeEditor: (id: string) => void;
   restoreEditor: (id: string) => void;
@@ -229,8 +284,8 @@ type AppState = {
   setEditorContent: (id: string, content: string) => void;
   saveEditor: (id?: string) => void;
   closeEditor: (id: string, force?: boolean) => boolean;
-  uploadFiles: (files: FileList | File[]) => Promise<void>;
-  downloadFile: (remotePath: string) => void;
+  uploadFiles: (files: FileList | File[], sessionId?: string) => Promise<void>;
+  downloadFile: (remotePath: string, sessionId?: string) => void;
   setSnippets: (list: { name: string; cmd: string }[]) => void;
   notify: (kind: ToastItem['kind'], title: string, message?: string) => void;
   dismissToast: (id: number) => void;
@@ -352,9 +407,133 @@ function patchSession(
   return sessions.map((s) => (s.id === id ? { ...s, ...patch } : s));
 }
 
+export function emptyLocalPane(): LocalPaneState {
+  return { path: null, files: [], listLoading: false, listRequestId: null };
+}
+
+/** Current directory of a files pane, whatever its target kind. */
+export function paneCurrentPath(state: {
+  filesPanes: Record<PaneSide, { target: FilesPaneTarget | null }>;
+  localPanes: Record<PaneSide, LocalPaneState>;
+  sessions: SessionState[];
+}, side: PaneSide): string | null {
+  const target = state.filesPanes[side].target;
+  if (target === 'local') return state.localPanes[side].path;
+  if (!target) return null;
+  const sess = state.sessions.find((s) => s.id === target);
+  return sess?.remotePath || null;
+}
+
+/** True when the pane can run file operations right now. */
+export function paneReady(state: {
+  filesPanes: Record<PaneSide, { target: FilesPaneTarget | null }>;
+  localPanes: Record<PaneSide, LocalPaneState>;
+  sessions: SessionState[];
+}, side: PaneSide): boolean {
+  const target = state.filesPanes[side].target;
+  if (target === 'local') return Boolean(state.localPanes[side].path);
+  if (!target) return false;
+  const sess = state.sessions.find((s) => s.id === target);
+  return sess?.status === 'ready' && sess?.sftpStatus === 'ready';
+}
+
+const EMPTY_FILES: RemoteFile[] = [];
+
+/** Files listed in a pane right now (remote panes read their session state). */
+export function paneFiles(state: {
+  filesPanes: Record<PaneSide, { target: FilesPaneTarget | null }>;
+  localPanes: Record<PaneSide, LocalPaneState>;
+  sessions: SessionState[];
+}, side: PaneSide): RemoteFile[] {
+  const target = state.filesPanes[side].target;
+  if (target === 'local') return state.localPanes[side].files;
+  if (!target) return EMPTY_FILES;
+  return state.sessions.find((s) => s.id === target)?.files || EMPTY_FILES;
+}
+
+/** Build a saved-connection entry from a form snapshot (without id). */
+async function buildConnectionEntry(
+  form: ConnectForm,
+  name: string,
+  vaultKey: CryptoKey | null,
+): Promise<Record<string, unknown>> {
+  const jumpHost = form.useJump && form.jumpHost
+    ? {
+        host: form.jumpHost,
+        port: form.jumpPort,
+        username: form.jumpUsername,
+        password: form.jumpPassword,
+        privateKey: form.jumpPrivateKey,
+        passphrase: form.jumpPassphrase,
+      }
+    : null;
+  const secrets: SecretFields = {
+    password: form.password,
+    privateKey: form.privateKey,
+    passphrase: form.passphrase,
+    jumpHost,
+  };
+  const base = {
+    name,
+    host: form.host,
+    port: form.port,
+    username: form.username,
+    proxyType: form.proxyType,
+    proxyHost: form.proxyHost,
+    proxyPort: form.proxyPort,
+    x11Forward: form.x11Forward,
+    x11Trusted: form.x11Trusted,
+  };
+  if (vaultKey) {
+    return { ...base, encrypted: true, secrets: await encryptSecrets(vaultKey, secrets) };
+  }
+  return { ...base, ...secrets, encrypted: false };
+}
+
+/**
+ * Upsert a connection entry: update the entry matched by matchId, otherwise by
+ * host+port+username, otherwise append as new. preserveName keeps the existing
+ * entry's custom name when updating.
+ */
+function upsertConnectionList(
+  list: Array<Record<string, unknown>>,
+  entry: Record<string, unknown>,
+  matchId: number | null,
+  preserveName: boolean,
+): Array<Record<string, unknown>> {
+  let targetId: number | null = null;
+  if (matchId != null && list.some((c) => c.id === matchId)) {
+    targetId = matchId;
+  } else {
+    const found = list.find((c) => (
+      c.host === entry.host
+      && Number(c.port || 22) === Number(entry.port || 22)
+      && c.username === entry.username
+    ));
+    if (found) targetId = found.id as number;
+  }
+  if (targetId != null) {
+    return list.map((c) => {
+      if (c.id !== targetId) return c;
+      return {
+        ...entry,
+        id: targetId,
+        name: preserveName ? ((c.name as string) || (entry.name as string)) : entry.name,
+        // Manual re-saves carry no usage timestamp — keep the previous one.
+        ...((entry.lastUsedAt ?? c.lastUsedAt) != null
+          ? { lastUsedAt: entry.lastUsedAt ?? c.lastUsedAt }
+          : {}),
+      };
+    });
+  }
+  return [...list, { ...entry, id: Date.now() }];
+}
+
 const connectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Form snapshots taken at CONNECT time, consumed for auto-save on CONNECTED. */
+const pendingAutoSave = new Map<string, ConnectForm>();
 let editorZCounter = 20;
 
 function nextEditorZ() {
@@ -404,12 +583,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   vaultUnlocked: !hasVault(),
   sessions: [],
   activeSessionId: null,
-  sidebarTab: 'connect',
+  filesPanes: { left: { target: 'local' }, right: { target: null } },
+  localPanes: { left: emptyLocalPane(), right: emptyLocalPane() },
+  paneTransfers: {},
+  activePage: 'hosts',
   termFontSize: parseInt(localStorage.getItem('ssh_font_size') || '14', 10) || 14,
-  filePanelOpen: true,
   bgUrl: loadStoredBgUrl(),
   bgOpacity: parseInt(localStorage.getItem('ssh_bg_opacity') || '15', 10) || 15,
   form: defaultForm(),
+  editingConnectionId: null,
   snippets: (() => {
     try {
       const s = JSON.parse(localStorage.getItem('ssh_snippets') || 'null');
@@ -427,7 +609,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
 
   init: async () => {
-    const first = newSession('会话 1');
+    const first = newSession('New Tab');
     set({ sessions: [first], activeSessionId: first.id, vaultUnlocked: !hasVault() });
 
     try {
@@ -560,12 +742,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   lockVault: () => set({ vaultKey: null, vaultUnlocked: false }),
 
   setForm: (patch) => set({ form: { ...get().form, ...patch } }),
-  setSidebarTab: (t) => set({ sidebarTab: t }),
+    resetForm: () => set({ form: defaultForm() }),
+    setEditingConnection: (id) => set({ editingConnectionId: id }),
+  setActivePage: (p) => set({ activePage: p }),
   setFontSize: (n) => {
     localStorage.setItem('ssh_font_size', String(n));
     set({ termFontSize: n });
   },
-  toggleFilePanel: () => set({ filePanelOpen: !get().filePanelOpen }),
   setBg: (url, opacity) => {
     if (url && url.length > BG_DATA_URL_MAX) {
       get().notify('error', '背景图过大', '请换更小的图后再试');
@@ -608,8 +791,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   dismissToast: (id) => set({ toasts: get().toasts.filter((item) => item.id !== id) }),
 
   createSession: () => {
-    const s = newSession(`会话 ${get().sessions.length + 1}`);
-    set({ sessions: [...get().sessions, s], activeSessionId: s.id, sidebarTab: 'connect' });
+    const s = newSession('New Tab');
+    // Fresh tabs land on the New Tab page (rendered inside the terminal view).
+    set({ sessions: [...get().sessions, s], activeSessionId: s.id, activePage: 'terminal' });
     return s.id;
   },
 
@@ -621,24 +805,49 @@ export const useAppStore = create<AppState>((set, get) => ({
     sshSocket.send({ type: MSG.DISCONNECT, sessionId: id });
     clearTimer(connectTimers, id);
     clearTimer(disconnectTimers, id);
+    pendingAutoSave.delete(id);
     const sessions = get().sessions.filter((s) => s.id !== id);
     const editors = get().editors.filter((editor) => editor.sessionId !== id);
     const clip = get().fileClipboard;
     const pendingPaste = get().pendingPaste;
     let active = get().activeSessionId;
-    if (active === id) active = sessions[0]?.id || null;
+    const closingActive = active === id;
+    // Never activate a hidden (files-only) session.
+    if (closingActive) active = sessions.find((s) => !s.hidden)?.id || null;
     const clearClip = clip?.sessionId === id ? { fileClipboard: null as null } : {};
     const clearPaste = pendingPaste?.sessionId === id ? { pendingPaste: null as null } : {};
-    if (sessions.length === 0) {
-      const s = newSession('会话 1');
-      set({ sessions: [s], activeSessionId: s.id, editors, ...clearClip, ...clearPaste });
+    // Closing the foreground tab reveals the next one, browser-style.
+    const revealTab = closingActive ? { activePage: 'terminal' as PageId } : {};
+    const panes = get().filesPanes;
+    const clearFiles = (panes.left.target === id || panes.right.target === id)
+      ? {
+        filesPanes: {
+          left: panes.left.target === id ? { target: null } : panes.left,
+          right: panes.right.target === id ? { target: null } : panes.right,
+        },
+      }
+      : {};
+    // Always keep at least one visible tab in the strip.
+    if (!sessions.some((s) => !s.hidden)) {
+      const s = newSession('New Tab');
+      const nextActive = active && sessions.some((x) => x.id === active) ? active : s.id;
+      set({
+        sessions: [s, ...sessions],
+        activeSessionId: nextActive,
+        editors,
+        ...clearClip,
+        ...clearPaste,
+        ...revealTab,
+        ...clearFiles,
+      });
       return;
     }
-    set({ sessions, activeSessionId: active, editors, ...clearClip, ...clearPaste });
+    set({ sessions, activeSessionId: active, editors, ...clearClip, ...clearPaste, ...revealTab, ...clearFiles });
   },
 
-  connectActive: async () => {
-    const { form, activeSessionId, sessions } = get();
+  connectActive: async (targetId) => {
+    const { form, sessions } = get();
+    const activeSessionId = targetId || get().activeSessionId;
     if (!activeSessionId) return;
     const sess = sessions.find((s) => s.id === activeSessionId);
     if (sess && ['connecting', 'ready', 'disconnecting'].includes(sess.status)) return;
@@ -681,6 +890,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       emitTermWrite(activeSessionId, `\r\n\x1b[31m${msg}\x1b[0m\r\n`, DEFAULT_TERMINAL_ID);
       get().notify('error', '连接失败', msg);
+      // Initial connect failed — drop the orphaned tab.
+      get().closeSession(activeSessionId);
       return;
     }
 
@@ -728,8 +939,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         }),
       });
       get().notify('error', '连接失败', message);
+      // Initial connect failed — drop the orphaned tab.
+      get().closeSession(activeSessionId);
       return;
     }
+
+    // Snapshot the form so a successful handshake can auto-save this host.
+    pendingAutoSave.set(activeSessionId, { ...form });
 
     clearTimer(connectTimers, activeSessionId);
     connectTimers.set(activeSessionId, setTimeout(() => {
@@ -744,6 +960,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         }),
       });
       get().notify('error', '连接超时', '服务器在 25 秒内未完成 SSH 握手');
+      // Initial connect failed — drop the orphaned tab.
+      get().closeSession(activeSessionId);
     }, 25_000));
   },
 
@@ -788,14 +1006,222 @@ export const useAppStore = create<AppState>((set, get) => ({
         x11Forward: Boolean(c.x11Forward),
         x11Trusted: Boolean(c.x11Trusted),
       },
-      sidebarTab: 'connect',
     });
     return true;
   },
 
   connectSaved: async (id) => {
+    const target = get().savedConnections.find((x) => x.id === id);
+    if (target) {
+      // A live session to the same host already exists — switch to it instead
+      // of stacking duplicate tabs for repeated clicks on the same card.
+      const existing = get().sessions.find((s) => (
+        ['connecting', 'ready'].includes(s.status)
+        && s.host === String(target.host)
+        && Number(s.port || 22) === Number(target.port || 22)
+        && s.username === String(target.username)
+      ));
+      if (existing) {
+        set({ activeSessionId: existing.id, activePage: 'terminal' });
+        return;
+      }
+    }
+    const sess = get().sessions.find((s) => s.id === get().activeSessionId);
+    if (sess && ['connecting', 'ready', 'disconnecting'].includes(sess.status)) {
+      get().createSession();
+    }
     const ok = await get().applySavedConnection(id);
     if (ok) await get().connectActive();
+  },
+
+  // Files page: browse a host over a dedicated SFTP connection without
+  // opening a terminal tab.
+  openFilesHost: async (savedId, side = 'right') => {
+    const target = get().savedConnections.find((x) => x.id === savedId);
+    if (!target) return;
+    const matches = (s: SessionState) => (
+      ['connecting', 'ready'].includes(s.status)
+      && s.host === String(target.host)
+      && Number(s.port || 22) === Number(target.port || 22)
+      && s.username === String(target.username)
+    );
+    // The pane already points at this host — nothing to do.
+    const bound = get().sessions.find((s) => s.id === get().filesPanes[side].target);
+    if (bound?.hidden && matches(bound)) return;
+    // Prefer binding to a live terminal session to the same host.
+    const live = get().sessions.find((s) => !s.hidden && matches(s));
+    if (live) {
+      get().closeFilesTarget(side);
+      set({ filesPanes: { ...get().filesPanes, [side]: { target: live.id } } });
+      return;
+    }
+    const label = String(target.name || `${target.username}@${target.host}`);
+    const dedicated: SessionState = { ...newSession(label), hidden: true };
+    set({
+      sessions: [...get().sessions, dedicated],
+      filesPanes: { ...get().filesPanes, [side]: { target: dedicated.id } },
+    });
+    if (bound?.hidden) get().closeSession(bound.id);
+    const ok = await get().applySavedConnection(savedId);
+    if (ok) await get().connectActive(dedicated.id);
+  },
+
+  closeFilesTarget: (side = 'right') => {
+    const bound = get().sessions.find((s) => s.id === get().filesPanes[side].target);
+    if (bound?.hidden) {
+      // closeSession clears the pane target for us.
+      get().closeSession(bound.id);
+      return;
+    }
+    set({ filesPanes: { ...get().filesPanes, [side]: { target: null } } });
+  },
+
+  setPaneTarget: (side, target) => {
+    const panes = get().filesPanes;
+    if (panes[side].target === target) return;
+    const previous = get().sessions.find((s) => s.id === panes[side].target);
+    set({ filesPanes: { ...panes, [side]: { target } } });
+    // Switching away from a dedicated hidden session closes it.
+    if (previous?.hidden) get().closeSession(previous.id);
+    if (target === 'local') get().listPane(side);
+  },
+
+  listPane: (side, path) => {
+    const target = get().filesPanes[side].target;
+    if (target === 'local') {
+      const pane = get().localPanes[side];
+      const requestId = `local-list-${side}-${Date.now()}`;
+      const sent = sshSocket.send({
+        type: MSG.LOCAL_LIST,
+        id: requestId,
+        path: path ?? pane.path ?? undefined,
+      });
+      if (!sent) {
+        get().notify('error', '无法读取目录', '控制连接已断开');
+        return;
+      }
+      set({
+        localPanes: {
+          ...get().localPanes,
+          [side]: { ...pane, listLoading: true, listRequestId: requestId },
+        },
+      });
+      return;
+    }
+    if (target) get().listFiles(path, target);
+  },
+
+  paneTouch: (side, name) => {
+    const target = get().filesPanes[side].target;
+    if (target === 'local') {
+      const pane = get().localPanes[side];
+      if (!pane.path) return;
+      const opId = `local-touch-${side}-${Date.now()}`;
+      pendingLocalOps.set(opId, side);
+      sshSocket.send({
+        type: MSG.LOCAL_TOUCH,
+        id: opId,
+        path: `${pane.path}/${name}`.replace(/\/+/g, '/'),
+      });
+      return;
+    }
+    // Remote: existing createFile flow (SFTP_WRITE createOnly, opens the editor).
+    if (target) get().createFile(name, target);
+  },
+
+  paneMkdir: (side, name) => {
+    const target = get().filesPanes[side].target;
+    if (target === 'local') {
+      const pane = get().localPanes[side];
+      if (!pane.path) return;
+      const opId = `local-mkdir-${side}-${Date.now()}`;
+      pendingLocalOps.set(opId, side);
+      sshSocket.send({
+        type: MSG.LOCAL_MKDIR,
+        id: opId,
+        path: `${pane.path}/${name}`.replace(/\/+/g, '/'),
+      });
+      return;
+    }
+    if (target) get().mkdir(name, target);
+  },
+
+  paneRename: (side, from, to) => {
+    const target = get().filesPanes[side].target;
+    if (target === 'local') {
+      const opId = `local-rename-${side}-${Date.now()}`;
+      pendingLocalOps.set(opId, side);
+      sshSocket.send({ type: MSG.LOCAL_RENAME, id: opId, from, to });
+      return;
+    }
+    if (target) get().rename(from, to, target);
+  },
+
+  paneRemove: (side, path) => {
+    const target = get().filesPanes[side].target;
+    if (target === 'local') {
+      const opId = `local-rm-${side}-${Date.now()}`;
+      pendingLocalOps.set(opId, side);
+      sshSocket.send({ type: MSG.LOCAL_RM, id: opId, path });
+      return;
+    }
+    if (target) get().removePath(path, target);
+  },
+
+  transferToOtherPane: (side, file) => {
+    const other: PaneSide = side === 'left' ? 'right' : 'left';
+    const srcTarget = get().filesPanes[side].target;
+    const dstTarget = get().filesPanes[other].target;
+    if (!srcTarget || !dstTarget) {
+      get().notify('warning', '另一侧尚未选择目标');
+      return;
+    }
+    if (!paneReady(get(), side) || !paneReady(get(), other)) {
+      get().notify('warning', '两侧都就绪后才能传输');
+      return;
+    }
+    const srcDir = paneCurrentPath(get(), side);
+    const dstDir = paneCurrentPath(get(), other);
+    if (!srcDir || !dstDir) return;
+    const from = `${srcDir}/${file.filename}`.replace(/\/+/g, '/');
+    const to = `${dstDir}/${file.filename}`.replace(/\/+/g, '/');
+    if (from === to && srcTarget === dstTarget) {
+      get().notify('warning', '源与目标相同');
+      return;
+    }
+    // Same remote session: reuse the in-place server-side SFTP copy.
+    if (srcTarget === dstTarget && srcTarget !== 'local') {
+      const opId = `copy-${Date.now()}`;
+      get().addCmdLog('copy', `cp -r ${from} ${to}`, `复制 ${file.filename}`);
+      if (sshSocket.send({ type: MSG.SFTP_COPY, sessionId: srcTarget, id: opId, from, to })) {
+        set({ sessions: patchSession(get().sessions, srcTarget, { fileOperation: opId }) });
+      }
+      return;
+    }
+    const id = `xfer-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const sent = sshSocket.send({
+      type: MSG.TRANSFER_START,
+      id,
+      src: { sessionId: srcTarget === 'local' ? null : srcTarget, path: from },
+      dst: { sessionId: dstTarget === 'local' ? null : dstTarget, path: to },
+    });
+    if (!sent) {
+      get().notify('error', '传输失败', '控制连接已断开');
+      return;
+    }
+    pendingPaneTransfers.set(id, other);
+    set({
+      paneTransfers: {
+        ...get().paneTransfers,
+        [other]: { id, written: 0, total: file.isDir ? 0 : file.size, file: file.filename },
+      },
+    });
+  },
+
+  abortPaneTransfer: (side) => {
+    const active = get().paneTransfers[side];
+    if (!active) return;
+    sshSocket.send({ type: MSG.TRANSFER_ABORT, id: active.id });
   },
 
   disconnectActive: () => {
@@ -1022,73 +1448,45 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  saveCurrentConnection: async (name) => {
+  saveCurrentConnection: async (name, opts) => {
     const { form, vaultKey } = get();
     const label = name.trim();
     if (!label) {
-      get().notify('warning', '请填写连接名称');
+      if (!opts?.silent) get().notify('warning', '请填写连接名称');
       return;
     }
     if (!form.host || !form.username) {
-      get().notify('warning', '请至少填写主机地址和用户名');
+      if (!opts?.silent) get().notify('warning', '请至少填写主机地址和用户名');
       return;
     }
     if (hasVault() && !vaultKey) {
-      get().notify('warning', '请先解锁凭据保险库后再保存');
+      if (!opts?.silent) get().notify('warning', '请先解锁凭据保险库后再保存');
       return;
     }
-    const jumpHost = form.useJump && form.jumpHost
-      ? {
-          host: form.jumpHost,
-          port: form.jumpPort,
-          username: form.jumpUsername,
-          password: form.jumpPassword,
-          privateKey: form.jumpPrivateKey,
-          passphrase: form.jumpPassphrase,
-        }
-      : null;
-    const secrets: SecretFields = {
-      password: form.password,
-      privateKey: form.privateKey,
-      passphrase: form.passphrase,
-      jumpHost,
-    };
-    let entry: Record<string, unknown>;
-    if (vaultKey) {
-      entry = {
-        id: Date.now(),
-        name: label,
-        host: form.host,
-        port: form.port,
-        username: form.username,
-        proxyType: form.proxyType,
-        proxyHost: form.proxyHost,
-        proxyPort: form.proxyPort,
-        x11Forward: form.x11Forward,
-        x11Trusted: form.x11Trusted,
-        encrypted: true,
-        secrets: await encryptSecrets(vaultKey, secrets),
-      };
-    } else {
-      entry = {
-        id: Date.now(),
-        name: label,
-        host: form.host,
-        port: form.port,
-        username: form.username,
-        ...secrets,
-        proxyType: form.proxyType,
-        proxyHost: form.proxyHost,
-        proxyPort: form.proxyPort,
-        x11Forward: form.x11Forward,
-        x11Trusted: form.x11Trusted,
-        encrypted: false,
-      };
-    }
-    const list = [...get().savedConnections, entry];
+    const editingId = get().editingConnectionId;
+    const entry = await buildConnectionEntry(form, label, vaultKey);
+    const list = upsertConnectionList(get().savedConnections, entry, editingId, Boolean(opts?.preserveName));
     saveRawConnections(list);
-    set({ savedConnections: list, sidebarTab: 'saved' });
-    get().notify('success', '连接已保存', label);
+    set({
+      savedConnections: list,
+      ...(editingId != null ? { editingConnectionId: null as null } : {}),
+    });
+    if (!opts?.silent) get().notify('success', '连接已保存', label);
+  },
+
+  autoSaveConnection: async (sessionId) => {
+    const snapshot = pendingAutoSave.get(sessionId);
+    if (!snapshot) return;
+    pendingAutoSave.delete(sessionId);
+    if (!snapshot.host || !snapshot.username) return;
+    const { vaultKey } = get();
+    // Never fall back to plaintext when a vault exists but is locked.
+    if (hasVault() && !vaultKey) return;
+    const entry = await buildConnectionEntry(snapshot, `${snapshot.username}@${snapshot.host}`, vaultKey);
+    entry.lastUsedAt = Date.now();
+    const list = upsertConnectionList(get().savedConnections, entry, null, true);
+    saveRawConnections(list);
+    set({ savedConnections: list });
   },
 
   deleteSaved: (id) => {
@@ -1130,8 +1528,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     sshSocket.send({ type: MSG.EXEC, sessionId: id, id: execId || `exec-${Date.now()}`, command });
   },
 
-  mkdir: (name) => {
-    const id = get().activeSessionId;
+  mkdir: (name, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((s) => s.id === id);
     if (!id || !sess || sess.sftpStatus !== 'ready') return;
     const path = `${sess.remotePath}/${name}`.replace(/\/+/g, '/');
@@ -1142,8 +1540,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  rename: (from, to) => {
-    const id = get().activeSessionId;
+  rename: (from, to, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((item) => item.id === id);
     if (!id || sess?.sftpStatus !== 'ready') return;
     const opId = `rename-${Date.now()}`;
@@ -1153,8 +1551,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  removePath: (path) => {
-    const id = get().activeSessionId;
+  removePath: (path, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((item) => item.id === id);
     if (!id || sess?.sftpStatus !== 'ready') return;
     const opId = `remove-${Date.now()}`;
@@ -1270,8 +1668,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  previewFile: (path) => {
-    const id = get().activeSessionId;
+  previewFile: (path, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((item) => item.id === id);
     if (!id || sess?.sftpStatus !== 'ready') return;
     const existing = get().editors.find((editor) => editor.sessionId === id && editor.path === path);
@@ -1292,8 +1690,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  createFile: (name) => {
-    const id = get().activeSessionId;
+  createFile: (name, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((item) => item.id === id);
     if (!id || sess?.sftpStatus !== 'ready') return;
     const path = `${sess.remotePath}/${name}`.replace(/\/+/g, '/');
@@ -1321,8 +1719,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const editor = get().editors.find((item) => item.id === editorId);
     if (!editor) return;
     const zIndex = nextEditorZ();
+    const owner = get().sessions.find((item) => item.id === editor.sessionId);
+    // Hidden (files-only) sessions never steal the foreground tab.
+    const reveal = owner?.hidden
+      ? {}
+      : { activeSessionId: editor.sessionId, activePage: 'terminal' as PageId };
     set({
-      activeSessionId: editor.sessionId,
+      ...reveal,
       editors: get().editors.map((item) => (
         item.id === editorId ? { ...item, minimized: false, zIndex } : item
       )),
@@ -1363,6 +1766,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const editor = get().editors.find((item) => item.id === editorId);
     if (!editor || editor.minimized) return;
     const zIndex = nextEditorZ();
+    const owner = get().sessions.find((item) => item.id === editor.sessionId);
     set({
       editors: get().editors.map((item) => (
         item.id === editorId ? { ...item, zIndex } : item
@@ -1370,7 +1774,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessions: patchSession(get().sessions, editor.sessionId, {
         activeEditorId: editorId,
       }),
-      activeSessionId: editor.sessionId,
+      // Hidden (files-only) sessions never steal the foreground tab.
+      ...(owner?.hidden ? {} : { activeSessionId: editor.sessionId }),
     });
   },
 
@@ -1475,8 +1880,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     return true;
   },
 
-  uploadFiles: async (files) => {
-    const id = get().activeSessionId;
+  uploadFiles: async (files, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((s) => s.id === id);
     if (!id || sess?.sftpStatus !== 'ready') return;
     for (const file of Array.from(files)) {
@@ -1505,8 +1910,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  downloadFile: (remotePath) => {
-    const id = get().activeSessionId;
+  downloadFile: (remotePath, sessionId) => {
+    const id = sessionId || get().activeSessionId;
     const sess = get().sessions.find((s) => s.id === id);
     if (!id || !sess || sess.sftpStatus !== 'ready') return;
     const transferId = `dl-${Date.now()}`;
@@ -1537,7 +1942,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   handleWsMessage: (msg) => {
     const type = msg.type as string;
-    const sessionId = (msg.sessionId as string) || get().activeSessionId;
+    const sessionId = (msg.sessionId as string) || get().activeSessionId || '';
     const friendlySftpError = (raw: unknown) => {
       const text = String(raw || '未知错误');
       if (/Channel open failure|open failed/i.test(text)) {
@@ -1565,6 +1970,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       for (const id of connectTimers.keys()) clearTimer(connectTimers, id);
       for (const id of disconnectTimers.keys()) clearTimer(disconnectTimers, id);
       for (const session of get().sessions) emitTermClearSession(session.id);
+      // Tabs that never finished connecting are dropped entirely.
+      const connectingIds = get().sessions
+        .filter((session) => session.status === 'connecting')
+        .map((session) => session.id);
       set({
         sessions: get().sessions.map((session) => ({
           ...session,
@@ -1589,10 +1998,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingPaste: null,
       });
       get().notify('error', '连接已中断', '与 Noe-SSH 服务的连接断开，可直接重新连接');
+      for (const id of connectingIds) get().closeSession(id);
       return;
     }
 
-    if (!sessionId) return;
+    // Pane-scoped messages carry no sessionId: the local filesystem lives on the
+    // server and transfers address their endpoints through the transfer id.
+    const paneScoped = type === MSG.LOCAL_LIST_RESULT
+      || type === MSG.LOCAL_MKDIR_RESULT
+      || type === MSG.LOCAL_TOUCH_RESULT
+      || type === MSG.LOCAL_RENAME_RESULT
+      || type === MSG.LOCAL_RM_RESULT
+      || type === MSG.TRANSFER_PROGRESS
+      || type === MSG.TRANSFER_RESULT;
+    if (!sessionId && !paneScoped) return;
 
     if (type === MSG.CONNECTED) {
       clearTimer(connectTimers, sessionId);
@@ -1612,6 +2031,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           terminalSeq: Math.max(current?.terminalSeq || 1, 1),
         }),
       });
+      void get().autoSaveConnection(sessionId);
       return;
     }
 
@@ -1677,6 +2097,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       clearTransfersForSession(sessionId);
       clearTimer(connectTimers, sessionId);
       clearTimer(disconnectTimers, sessionId);
+      pendingAutoSave.delete(sessionId);
       emitTermClearSession(sessionId);
       const clip = get().fileClipboard;
       const pendingPaste = get().pendingPaste;
@@ -1739,6 +2160,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         String(msg.terminalId || resolveTerminalId(current)),
       );
       get().notify('error', 'SSH 错误', message);
+      // Initial connect failed — drop the orphaned tab.
+      if (current?.status === 'connecting') get().closeSession(sessionId);
       return;
     }
 
@@ -1799,6 +2222,87 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().notify('success', '上传完成');
         get().listFiles(undefined, sessionId);
       }
+      return;
+    }
+
+    if (type === MSG.LOCAL_LIST_RESULT) {
+      const side = (['left', 'right'] as PaneSide[]).find(
+        (s) => get().localPanes[s].listRequestId === msg.id,
+      );
+      if (!side) return;
+      const pane = get().localPanes[side];
+      if (msg.error) {
+        set({
+          localPanes: {
+            ...get().localPanes,
+            [side]: { ...pane, listLoading: false, listRequestId: null },
+          },
+        });
+        get().notify('error', '目录读取失败', friendlySftpError(msg.error));
+        return;
+      }
+      set({
+        localPanes: {
+          ...get().localPanes,
+          [side]: {
+            path: (msg.path as string) || pane.path,
+            files: (msg.files as RemoteFile[]) || [],
+            listLoading: false,
+            listRequestId: null,
+          },
+        },
+      });
+      return;
+    }
+
+    if (
+      type === MSG.LOCAL_MKDIR_RESULT
+      || type === MSG.LOCAL_TOUCH_RESULT
+      || type === MSG.LOCAL_RENAME_RESULT
+      || type === MSG.LOCAL_RM_RESULT
+    ) {
+      const side = pendingLocalOps.get(msg.id as string);
+      pendingLocalOps.delete(msg.id as string);
+      if (!side) return;
+      if (msg.error) {
+        get().notify('error', '操作失败', friendlySftpError(msg.error));
+        return;
+      }
+      get().listPane(side);
+      return;
+    }
+
+    if (type === MSG.TRANSFER_PROGRESS) {
+      const side = pendingPaneTransfers.get(msg.id as string);
+      if (!side) return;
+      set({
+        paneTransfers: {
+          ...get().paneTransfers,
+          [side]: {
+            id: msg.id as string,
+            written: (msg.written as number) || 0,
+            total: (msg.total as number) || 0,
+            file: (msg.file as string) || null,
+          },
+        },
+      });
+      return;
+    }
+
+    if (type === MSG.TRANSFER_RESULT) {
+      const side = pendingPaneTransfers.get(msg.id as string);
+      pendingPaneTransfers.delete(msg.id as string);
+      if (!side) return;
+      const next = { ...get().paneTransfers };
+      delete next[side];
+      set({ paneTransfers: next });
+      if (msg.error) {
+        get().notify('error', '传输失败', friendlySftpError(msg.error));
+      } else {
+        get().notify('success', '传输完成');
+      }
+      // A copy only changes the destination pane — refresh it.
+      get().listPane(side);
       return;
     }
 
@@ -1994,10 +2498,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             : item
         ))
         : [...get().editors, editor];
+      const previewOwner = get().sessions.find((item) => item.id === pending.sessionId);
       set({
         pendingPreviews,
         editors,
-        activeSessionId: pending.sessionId,
+        // Hidden (files-only) sessions never steal the foreground tab.
+        ...(previewOwner?.hidden
+          ? {}
+          : { activeSessionId: pending.sessionId, activePage: 'terminal' as PageId }),
         sessions: patchSession(get().sessions, pending.sessionId, {
           activeEditorId: editorId,
           workspaceMode: 'terminal',

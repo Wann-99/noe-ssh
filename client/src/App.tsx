@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppStore } from './store/appStore';
 import { hasVault } from './lib/crypto';
 import { Header } from './components/Header';
 import { SessionTabs } from './components/SessionTabs';
-import { Sidebar } from './components/Sidebar';
-import { Workspace } from './components/Workspace';
-import { FilePanel } from './components/FilePanel';
+import { NavRail } from './components/NavRail';
+import { HostsPage } from './components/pages/HostsPage';
+import { TerminalPage } from './components/pages/TerminalPage';
+import { FilesPage } from './components/pages/FilesPage';
+import { SnippetsPage } from './components/pages/SnippetsPage';
+import { ServerPage } from './components/pages/ServerPage';
+import { LogsPage } from './components/pages/LogsPage';
+import { SettingsPage } from './components/pages/SettingsPage';
 import { AccessGate } from './components/AccessGate';
 import { AdminPanel } from './components/AdminPanel';
 import { VaultGate } from './components/VaultGate';
@@ -13,26 +18,8 @@ import { BgModal } from './components/BgModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { UpdateModal } from './components/UpdateModal';
 import { DetachedEditor } from './components/DetachedEditor';
-import { Splitter } from './components/Splitter';
 import { ToastHost } from './components/ToastHost';
 import { getDesktopApi, getDetachedEditorId } from './lib/desktop';
-
-const SIDEBAR_MIN = 220;
-const SIDEBAR_MAX = 480;
-const SIDEBAR_DEFAULT = 300;
-const FILE_MIN = 260;
-const FILE_MAX = 560;
-const FILE_DEFAULT = 360;
-
-function clamp(n: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, n));
-}
-
-function loadWidth(key: string, fallback: number, min: number, max: number) {
-  const raw = parseInt(localStorage.getItem(key) || '', 10);
-  if (!Number.isFinite(raw)) return fallback;
-  return clamp(raw, min, max);
-}
 
 export default function App() {
   const detachedEditorId = getDetachedEditorId();
@@ -44,37 +31,13 @@ export default function App() {
   const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
   const bgUrl = useAppStore((s) => s.bgUrl);
   const bgOpacity = useAppStore((s) => s.bgOpacity);
-  const filePanelOpen = useAppStore((s) => s.filePanelOpen);
+  const activePage = useAppStore((s) => s.activePage);
   const connectActive = useAppStore((s) => s.connectActive);
   const disconnectActive = useAppStore((s) => s.disconnectActive);
   const [bgOpen, setBgOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [vaultGate, setVaultGate] = useState<'unlock' | 'setup' | null>(hasVault() ? 'unlock' : null);
-  const [sidebarW, setSidebarW] = useState(() =>
-    loadWidth('ssh_sidebar_w', SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX));
-  const [filePanelW, setFilePanelW] = useState(() =>
-    loadWidth('ssh_file_panel_w', FILE_DEFAULT, FILE_MIN, FILE_MAX));
-  const sidebarWRef = useRef(sidebarW);
-  const filePanelWRef = useRef(filePanelW);
-  sidebarWRef.current = sidebarW;
-  filePanelWRef.current = filePanelW;
-
-  const onSidebarDrag = useCallback((delta: number) => {
-    setSidebarW((prev) => clamp(prev + delta, SIDEBAR_MIN, SIDEBAR_MAX));
-  }, []);
-
-  const onFilePanelDrag = useCallback((delta: number) => {
-    setFilePanelW((prev) => clamp(prev + delta, FILE_MIN, FILE_MAX));
-  }, []);
-
-  const persistSidebar = useCallback(() => {
-    localStorage.setItem('ssh_sidebar_w', String(sidebarWRef.current));
-  }, []);
-
-  const persistFilePanel = useCallback(() => {
-    localStorage.setItem('ssh_file_panel_w', String(filePanelWRef.current));
-  }, []);
 
   useEffect(() => {
     if (detachedEditorId) return;
@@ -114,7 +77,7 @@ export default function App() {
   useEffect(() => {
     window.dispatchEvent(new Event('resize'));
     window.dispatchEvent(new CustomEvent('ssh-layout-resize'));
-  }, [filePanelOpen, sidebarW, filePanelW]);
+  }, [activePage]);
 
   useEffect(() => {
     if (hasVault() && !vaultUnlocked) setVaultGate('unlock');
@@ -209,44 +172,33 @@ export default function App() {
           : undefined
       }
     >
-      <Header
-        onOpenBg={() => setBgOpen(true)}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-        onSetupVault={() => setVaultGate('setup')}
-        onUnlockVault={() => setVaultGate('unlock')}
-        onOpenUpdate={() => {
-          setUpdateOpen(true);
-          void getDesktopApi()?.updater.check();
-        }}
-      />
+      <Header />
       <SessionTabs />
-      <div className="workspace">
-        <aside className="sidebar-shell" style={{ width: sidebarW }}>
-          <Sidebar />
-        </aside>
-        <Splitter
-          orientation="vertical"
-          onDrag={onSidebarDrag}
-          onDragEnd={persistSidebar}
-        />
-        <div className="main-stage">
-          <div className="workbench-pane">
-            <Workspace />
+      <div className="app-body">
+        <NavRail />
+        <main className="page-area">
+          {/* Terminal stays mounted (hidden) so xterm buffers survive page switches. */}
+          <div className="page-slot" hidden={activePage !== 'terminal'}>
+            <TerminalPage visible={activePage === 'terminal'} />
           </div>
-          {filePanelOpen && (
-            <>
-              <Splitter
-                orientation="vertical"
-                reverse
-                onDrag={onFilePanelDrag}
-                onDragEnd={persistFilePanel}
-              />
-              <div className="file-pane" style={{ width: filePanelW }}>
-                <FilePanel />
-              </div>
-            </>
+          {activePage === 'hosts' && <HostsPage />}
+          {activePage === 'files' && <FilesPage />}
+          {activePage === 'snippets' && <SnippetsPage />}
+          {activePage === 'server' && <ServerPage />}
+          {activePage === 'logs' && <LogsPage />}
+          {activePage === 'settings' && (
+            <SettingsPage
+              onOpenBg={() => setBgOpen(true)}
+              onOpenShortcuts={() => setShortcutsOpen(true)}
+              onSetupVault={() => setVaultGate('setup')}
+              onUnlockVault={() => setVaultGate('unlock')}
+              onOpenUpdate={() => {
+                setUpdateOpen(true);
+                void getDesktopApi()?.updater.check();
+              }}
+            />
           )}
-        </div>
+        </main>
       </div>
       {bgOpen && <BgModal onClose={() => setBgOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}

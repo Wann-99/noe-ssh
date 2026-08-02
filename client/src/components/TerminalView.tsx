@@ -408,7 +408,7 @@ export const TerminalView = memo(function TerminalView({ visible }: { visible: b
       }
       if (e.key === 'F11') {
         e.preventDefault();
-        document.querySelector('.main-stage')?.classList.toggle('fullscreen');
+        document.querySelector('.app-shell')?.classList.toggle('term-fullscreen');
         setTimeout(() => {
           const state = useAppStore.getState();
           const sid = state.activeSessionId;

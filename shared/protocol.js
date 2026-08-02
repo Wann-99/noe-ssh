@@ -26,6 +26,15 @@ const MSG = {
   SFTP_UPLOAD_ABORT: 'sftp-upload-abort',
   SFTP_DOWNLOAD_START: 'sftp-download-start',
   SFTP_DOWNLOAD_ABORT: 'sftp-download-abort',
+  // Local filesystem (server host) browsing, sessionId is null.
+  LOCAL_LIST: 'local-list',
+  LOCAL_MKDIR: 'local-mkdir',
+  LOCAL_TOUCH: 'local-touch',
+  LOCAL_RENAME: 'local-rename',
+  LOCAL_RM: 'local-rm',
+  // Cross-endpoint copy (local <-> remote, remote <-> remote), streamed server-side.
+  TRANSFER_START: 'transfer-start',
+  TRANSFER_ABORT: 'transfer-abort',
   // server -> client
   AUTH_OK: 'auth-ok',
   AUTH_REQUIRED: 'auth-required',
@@ -53,6 +62,13 @@ const MSG = {
   SFTP_DOWNLOAD_META: 'sftp-download-meta',
   SFTP_DOWNLOAD_CHUNK: 'sftp-download-chunk',
   SFTP_DOWNLOAD_RESULT: 'sftp-download-result',
+  LOCAL_LIST_RESULT: 'local-list-result',
+  LOCAL_MKDIR_RESULT: 'local-mkdir-result',
+  LOCAL_TOUCH_RESULT: 'local-touch-result',
+  LOCAL_RENAME_RESULT: 'local-rename-result',
+  LOCAL_RM_RESULT: 'local-rm-result',
+  TRANSFER_PROGRESS: 'transfer-progress',
+  TRANSFER_RESULT: 'transfer-result',
 };
 
 const PREVIEW_MAX_BYTES = 1024 * 1024;

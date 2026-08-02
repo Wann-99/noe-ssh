@@ -5,13 +5,18 @@ import { useAppStore } from '../store/appStore';
 export function SessionTabs() {
   // Only re-render when tab identity/label/status changes — not on every file list tick.
   const tabsKey = useAppStore((s) =>
-    s.sessions.map((session) => `${session.id}\0${session.label}\0${session.status}`).join('|'));
+    s.sessions
+      .filter((session) => !session.hidden)
+      .map((session) => `${session.id}\0${session.label}\0${session.status}`)
+      .join('|'));
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
+  const setActivePage = useAppStore((s) => s.setActivePage);
   const createSession = useAppStore((s) => s.createSession);
   const closeSession = useAppStore((s) => s.closeSession);
   const sessions = useMemo(
-    () => useAppStore.getState().sessions.map((session) => ({
+    // Files-only sessions live outside the tab strip.
+    () => useAppStore.getState().sessions.filter((session) => !session.hidden).map((session) => ({
       id: session.id,
       label: session.label,
       status: session.status,
@@ -26,7 +31,11 @@ export function SessionTabs() {
           key={s.id}
           type="button"
           className={`session-tab ${s.id === activeSessionId ? 'active' : ''} status-${s.status}`}
-          onClick={() => setActiveSession(s.id)}
+          onClick={() => {
+            setActiveSession(s.id);
+            // Session tabs are the terminal windows — always reveal them.
+            setActivePage('terminal');
+          }}
         >
           <span className="session-status-dot" />
           <span className="tab-label">{s.label}</span>

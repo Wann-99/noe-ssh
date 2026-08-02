@@ -17,8 +17,12 @@ const {
 const { openSshConnection, execCommand } = require('../ssh/client');
 const { attachX11Forwarding } = require('../ssh/x11');
 const sftp = require('../sftp/handlers');
+const transfer = require('../sftp/transfer');
+const localfs = require('../localfs/handlers');
 const { authRequired, getSession: getAuthSession } = require('../http/app');
 const { record } = require('../audit/logger');
+
+const localFsDisabled = () => String(process.env.NOE_LOCAL_FS || 'on').toLowerCase() === 'off';
 
 function send(ws, payload) {
   if (ws.readyState === WebSocket.OPEN) {
@@ -69,6 +73,8 @@ function attachWsHub(server) {
 
     /** @type {Map<string, any>} */
     const sessions = new Map();
+    /** @type {Map<string, { promise: Promise, abort: () => void }>} */
+    const transfers = new Map();
     /** @type {Map<string, { chunks: Buffer[], bytes: number, timer: NodeJS.Timeout|null }>} */
     const termOutBuffers = new Map();
     /** Serialize inbound handlers so upload chunks stay ordered. */
@@ -338,6 +344,10 @@ function attachWsHub(server) {
     };
 
     const destroyAll = () => {
+      for (const handle of transfers.values()) {
+        try { handle.abort(); } catch (_) { /* ignore */ }
+      }
+      transfers.clear();
       for (const id of [...sessions.keys()]) {
         destroySession(id, 'Connection closed');
       }
@@ -1175,6 +1185,108 @@ function attachWsHub(server) {
           if (dl.resumeTimer) clearInterval(dl.resumeTimer);
           sess.downloads.delete(msg.id);
         }
+      }
+
+      // ---- Local filesystem (server host) pane ----
+      if (msg.type === MSG.LOCAL_LIST) {
+        if (localFsDisabled()) {
+          send(ws, { type: MSG.LOCAL_LIST_RESULT, id: msg.id, error: '本地文件访问已禁用' });
+          return;
+        }
+        try {
+          const { path: dir, files } = await localfs.listDir(msg.path);
+          send(ws, { type: MSG.LOCAL_LIST_RESULT, id: msg.id, path: dir, files });
+        } catch (err) {
+          send(ws, { type: MSG.LOCAL_LIST_RESULT, id: msg.id, error: err.message });
+        }
+        return;
+      }
+
+      if (
+        msg.type === MSG.LOCAL_MKDIR
+        || msg.type === MSG.LOCAL_TOUCH
+        || msg.type === MSG.LOCAL_RENAME
+        || msg.type === MSG.LOCAL_RM
+      ) {
+        const resultType = msg.type === MSG.LOCAL_MKDIR
+          ? MSG.LOCAL_MKDIR_RESULT
+          : msg.type === MSG.LOCAL_TOUCH
+            ? MSG.LOCAL_TOUCH_RESULT
+            : msg.type === MSG.LOCAL_RENAME
+              ? MSG.LOCAL_RENAME_RESULT
+              : MSG.LOCAL_RM_RESULT;
+        if (localFsDisabled()) {
+          send(ws, { type: resultType, id: msg.id, error: '本地文件访问已禁用' });
+          return;
+        }
+        try {
+          if (msg.type === MSG.LOCAL_MKDIR) await localfs.mkdir(msg.path);
+          if (msg.type === MSG.LOCAL_TOUCH) await localfs.touch(msg.path);
+          if (msg.type === MSG.LOCAL_RENAME) await localfs.rename(msg.from, msg.to);
+          if (msg.type === MSG.LOCAL_RM) await localfs.remove(msg.path);
+          record({
+            ...auditBase(),
+            action: msg.type === MSG.LOCAL_MKDIR
+              ? 'local.mkdir'
+              : msg.type === MSG.LOCAL_TOUCH
+                ? 'local.touch'
+                : msg.type === MSG.LOCAL_RENAME
+                  ? 'local.rename'
+                  : 'local.rm',
+            path: msg.type === MSG.LOCAL_RENAME ? msg.from : msg.path,
+            detail: msg.type === MSG.LOCAL_RENAME ? { from: msg.from, to: msg.to } : undefined,
+          });
+          send(ws, { type: resultType, id: msg.id, error: null });
+        } catch (err) {
+          send(ws, { type: resultType, id: msg.id, error: err.message });
+        }
+        return;
+      }
+
+      // ---- Cross-endpoint copy (local <-> remote, remote <-> remote) ----
+      if (msg.type === MSG.TRANSFER_START) {
+        const id = String(msg.id || `xfer-${Date.now()}`);
+        try {
+          const src = await transfer.resolveEndpoint(msg.src, sessions);
+          const dst = await transfer.resolveEndpoint(msg.dst, sessions);
+          const handle = transfer.startTransfer({
+            id,
+            src,
+            dst,
+            onProgress: (p) => send(ws, { type: MSG.TRANSFER_PROGRESS, id, ...p }),
+          });
+          transfers.set(id, handle);
+          record({
+            ...auditBase(),
+            action: 'transfer.start',
+            detail: {
+              id,
+              src: { sessionId: msg.src?.sessionId ?? null, path: src.path },
+              dst: { sessionId: msg.dst?.sessionId ?? null, path: dst.path },
+            },
+          });
+          handle.promise.then(
+            (r) => {
+              transfers.delete(id);
+              record({ ...auditBase(), action: 'transfer.result', detail: { id, bytes: r.bytes } });
+              send(ws, { type: MSG.TRANSFER_RESULT, id, error: null, bytes: r.bytes });
+            },
+            (err) => {
+              transfers.delete(id);
+              record({ ...auditBase(), action: 'transfer.result', detail: { id, error: err.message } });
+              send(ws, { type: MSG.TRANSFER_RESULT, id, error: err.message });
+            },
+          );
+        } catch (err) {
+          send(ws, { type: MSG.TRANSFER_RESULT, id, error: err.message });
+        }
+        return;
+      }
+
+      if (msg.type === MSG.TRANSFER_ABORT) {
+        const handle = transfers.get(String(msg.id));
+        if (handle) handle.abort();
+        return;
       }
     }
 

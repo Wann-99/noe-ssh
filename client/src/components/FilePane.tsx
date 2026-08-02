@@ -2,29 +2,38 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowUp,
-  ClipboardPaste,
+  ChevronDown,
   Copy,
   Download,
   Eye,
   File,
   FileCode2,
   FileJson,
-  FilePlus2,
+  FilePlus,
   FileText,
   Folder,
   FolderPlus,
+  HardDrive,
   Link2,
+  Monitor,
   MoreHorizontal,
   Pencil,
   RefreshCw,
-  Scissors,
   Search,
+  Server,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import type { RemoteFile } from '@shared/protocol';
 import { joinRemotePath } from '../lib/remoteFileOps';
-import { useAppStore } from '../store/appStore';
+import {
+  paneCurrentPath,
+  paneFiles,
+  paneReady,
+  useAppStore,
+  type PaneSide,
+} from '../store/appStore';
 import {
   COL_GAP,
   COL_MIN,
@@ -39,6 +48,9 @@ import {
   viewStorageKey,
 } from '../lib/fileListColumns';
 
+/** dataTransfer MIME for dragging a row into the opposite pane. */
+const PANE_DRAG_MIME = 'application/x-noe-pane-file';
+
 type ColKey = 'name' | 'size' | 'time';
 
 function formatSize(n: number) {
@@ -48,7 +60,6 @@ function formatSize(n: number) {
   return `${(n / 1024 ** 3).toFixed(1)} GB`;
 }
 
-/** year/mon/day，例如 2024/12/09 */
 function formatDateYmd(ms: number) {
   const d = new Date(ms);
   const y = d.getFullYear();
@@ -57,7 +68,6 @@ function formatDateYmd(ms: number) {
   return `${y}/${m}/${day}`;
 }
 
-/** Collapse middle crumbs when path is deep: keep root, first, …, last 2 */
 function visibleCrumbs(crumbs: string[]) {
   if (crumbs.length <= 4) {
     return crumbs.map((c, i) => ({ type: 'seg' as const, name: c, index: i }));
@@ -83,38 +93,54 @@ function fileIcon(file: RemoteFile) {
   return <File size={16} />;
 }
 
-type DialogType = 'mkdir' | 'create' | 'rename' | 'delete';
+type DialogType = 'touch' | 'mkdir' | 'rename' | 'delete';
 type DialogState = {
   type: DialogType;
   file?: RemoteFile;
   value: string;
 } | null;
 
-export function FilePanel({ sessionId }: { sessionId?: string }) {
-  const sessions = useAppStore((s) => s.sessions);
-  const activeSessionId = useAppStore((s) => s.activeSessionId);
-  // Bound to a dedicated files session when provided, else the active tab.
-  const sid = sessionId || activeSessionId || undefined;
-  const listFiles = useAppStore((s) => s.listFiles);
-  const mkdir = useAppStore((s) => s.mkdir);
-  const createFile = useAppStore((s) => s.createFile);
-  const rename = useAppStore((s) => s.rename);
-  const removePath = useAppStore((s) => s.removePath);
+/**
+ * One side of the dual-pane files page. The target is either the server-local
+ * filesystem ('local') or a (possibly hidden dedicated) SSH session.
+ */
+export function FilePane({ side }: { side: PaneSide }) {
+  const otherSide: PaneSide = side === 'left' ? 'right' : 'left';
+  const target = useAppStore((s) => s.filesPanes[side].target);
+  const isLocal = target === 'local';
+  const sess = useAppStore((s) => (
+    !isLocal && target ? s.sessions.find((x) => x.id === target) : undefined
+  ));
+  const localPane = useAppStore((s) => s.localPanes[side]);
+  const currentPath = useAppStore((s) => paneCurrentPath(s, side));
+  const ready = useAppStore((s) => paneReady(s, side));
+  const otherReady = useAppStore((s) => paneReady(s, otherSide));
+  const filesRaw = useAppStore((s) => paneFiles(s, side));
+  const transfer = useAppStore((s) => s.paneTransfers[side]);
+  const savedConnections = useAppStore((s) => s.savedConnections);
+  const listPane = useAppStore((s) => s.listPane);
+  const setPaneTarget = useAppStore((s) => s.setPaneTarget);
+  const openFilesHost = useAppStore((s) => s.openFilesHost);
+  const closeFilesTarget = useAppStore((s) => s.closeFilesTarget);
+  const connectActive = useAppStore((s) => s.connectActive);
+  const paneTouch = useAppStore((s) => s.paneTouch);
+  const paneMkdir = useAppStore((s) => s.paneMkdir);
+  const paneRename = useAppStore((s) => s.paneRename);
+  const paneRemove = useAppStore((s) => s.paneRemove);
+  const transferToOtherPane = useAppStore((s) => s.transferToOtherPane);
+  const abortPaneTransfer = useAppStore((s) => s.abortPaneTransfer);
   const previewFile = useAppStore((s) => s.previewFile);
-  const uploadFiles = useAppStore((s) => s.uploadFiles);
   const downloadFile = useAppStore((s) => s.downloadFile);
-  const copyRemote = useAppStore((s) => s.copyRemote);
-  const cutRemote = useAppStore((s) => s.cutRemote);
-  const pasteRemote = useAppStore((s) => s.pasteRemote);
-  const fileClipboard = useAppStore((s) => s.fileClipboard);
+  const uploadFiles = useAppStore((s) => s.uploadFiles);
   const notify = useAppStore((s) => s.notify);
-  const sess = sessions.find((s) => s.id === sid);
+
   const [filter, setFilter] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [sort, setSort] = useState<'name' | 'size' | 'mtime'>('name');
   const [selected, setSelected] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: RemoteFile | null } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: RemoteFile } | null>(null);
+  const [pickerPos, setPickerPos] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [panelW, setPanelW] = useState(360);
   const [nameFont, setNameFont] = useState('13px sans-serif');
@@ -122,13 +148,19 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
   const listRef = useRef<HTMLDivElement>(null);
   const preferredRef = useRef<PreferredCols>({ ...DEFAULT_COLS });
 
-  const remotePath = sess?.remotePath || '/';
-  const colsKey = viewStorageKey(sess?.host, remotePath);
+  const remotePath = currentPath || '/';
+  const listLoading = isLocal ? localPane.listLoading : Boolean(sess?.listLoading);
+  const colsKey = viewStorageKey(isLocal ? 'local' : sess?.host, remotePath);
   const [preferred, setPreferred] = useState<PreferredCols>(() => loadColumnView(colsKey));
   preferredRef.current = preferred;
 
+  // Local panes load the server user's home on first show.
+  useEffect(() => {
+    if (isLocal && !localPane.path && !localPane.listLoading) listPane(side);
+  }, [isLocal, localPane.path, localPane.listLoading, listPane, side]);
+
   const files = useMemo(() => {
-    let list = [...(sess?.files || [])];
+    let list = [...filesRaw];
     if (!showHidden) list = list.filter((f) => !f.filename.startsWith('.'));
     if (filter) list = list.filter((f) => f.filename.toLowerCase().includes(filter.toLowerCase()));
     list.sort((a, b) => {
@@ -138,12 +170,9 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
       return a.filename.localeCompare(b.filename);
     });
     return list;
-  }, [sess?.files, filter, showHidden, sort]);
+  }, [filesRaw, filter, showHidden, sort]);
 
-  const allocated = useMemo(
-    () => allocateColumns(panelW, preferred),
-    [panelW, preferred],
-  );
+  const allocated = useMemo(() => allocateColumns(panelW, preferred), [panelW, preferred]);
 
   useEffect(() => {
     setPreferred(loadColumnView(colsKey));
@@ -161,7 +190,6 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
     if (!list) return;
     handle.setPointerCapture(event.pointerId);
     document.body.classList.add('fp-col-resizing');
-    // Freeze sibling widths for the whole drag so other dividers stay put.
     const frozen = { ...preferredRef.current };
 
     const onMove = (ev: PointerEvent) => {
@@ -174,30 +202,15 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
       if (contentW > 0) setPanelW(contentW);
 
       setPreferred(() => {
-        // 只改当前列；其它列保持拖拽开始时的宽度
         const next: PreferredCols = { ...frozen };
         if (key === 'name') {
-          next.name = clampRange(
-            fromLeft,
-            COL_MIN.name,
-            maxExclusiveWidth(contentW, 'name', frozen),
-          );
+          next.name = clampRange(fromLeft, COL_MIN.name, maxExclusiveWidth(contentW, 'name', frozen));
         } else if (key === 'size') {
-          // 大小列左缘 = name + gap
           const size = fromLeft - frozen.name - COL_GAP;
-          next.size = clampRange(
-            size,
-            COL_MIN.size,
-            maxExclusiveWidth(contentW, 'size', frozen),
-          );
+          next.size = clampRange(size, COL_MIN.size, maxExclusiveWidth(contentW, 'size', frozen));
         } else {
-          // 时间列左缘 = name + gap + size + gap
           const time = fromLeft - frozen.name - COL_GAP - frozen.size - COL_GAP;
-          next.time = clampRange(
-            time,
-            COL_MIN.time,
-            maxExclusiveWidth(contentW, 'time', frozen),
-          );
+          next.time = clampRange(time, COL_MIN.time, maxExclusiveWidth(contentW, 'time', frozen));
         }
         preferredRef.current = next;
         return next;
@@ -228,11 +241,7 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
     const longest = measureLongestNameWidth(files.map((f) => f.filename), nameFont);
     const next: PreferredCols = {
       ...preferredRef.current,
-      name: clampRange(
-        longest,
-        COL_MIN.name,
-        maxExclusiveWidth(width, 'name', preferredRef.current),
-      ),
+      name: clampRange(longest, COL_MIN.name, maxExclusiveWidth(width, 'name', preferredRef.current)),
     };
     setPreferred(next);
     preferredRef.current = next;
@@ -245,7 +254,7 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
 
   const goPath = (parts: string[]) => {
     const p = parts.length ? `/${parts.join('/')}` : '/';
-    listFiles(p, sid);
+    listPane(side, p);
   };
 
   const goUp = () => {
@@ -253,24 +262,9 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
     goPath(crumbs.slice(0, -1));
   };
 
-  const progress = sess?.transferProgress;
-  const connected = sess?.status === 'ready';
-  const ready = connected && sess?.sftpStatus === 'ready';
-  const canPaste = Boolean(
-    ready
-    && fileClipboard
-    && fileClipboard.sessionId === sid
-    && !sess?.fileOperation,
-  );
-
-  const cutPath = fileClipboard?.mode === 'cut'
-    && fileClipboard.sessionId === sid
-    ? fileClipboard.path
-    : null;
-
-  const openContextMenu = (x: number, y: number, file: RemoteFile | null) => {
+  const openContextMenu = (x: number, y: number, file: RemoteFile) => {
     setContextMenu({
-      x: Math.max(6, Math.min(x, window.innerWidth - 190)),
+      x: Math.max(6, Math.min(x, window.innerWidth - 200)),
       y: Math.max(6, Math.min(y, window.innerHeight - 280)),
       file,
     });
@@ -286,7 +280,6 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
-
     const measure = () => {
       const header = list.querySelector('.fp-list-header') as HTMLElement | null;
       const sample = list.querySelector('.fp-name') as HTMLElement | null;
@@ -297,25 +290,26 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
         setNameFont(`${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`);
       }
     };
-
     measure();
     const ro = new ResizeObserver(() => measure());
     ro.observe(list);
     return () => ro.disconnect();
-  }, [files.length, connected]);
+  }, [files.length, ready]);
 
   useEffect(() => {
     setSelected(null);
     setContextMenu(null);
-  }, [remotePath, sid]);
+  }, [remotePath, target]);
 
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    if (!contextMenu && !pickerPos) return undefined;
+    const close = () => {
+      setContextMenu(null);
+      setPickerPos(null);
+    };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close();
     };
-    // Defer so the opening click/pointerdown does not immediately dismiss the menu.
     const raf = requestAnimationFrame(() => {
       window.addEventListener('pointerdown', close);
     });
@@ -325,17 +319,20 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
       window.removeEventListener('pointerdown', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [contextMenu]);
+  }, [contextMenu, pickerPos]);
 
   const openFile = (file: RemoteFile) => {
-    const full = `${remotePath}/${file.filename}`.replace(/\/+/g, '/');
+    const full = joinRemotePath(remotePath, file.filename);
     if (file.isDir) {
-      listFiles(full, sid);
+      listPane(side, full);
       return;
     }
-    // Leave the list so Ctrl/⌘+C/V go to the editor, not remote clipboard.
+    if (isLocal) {
+      notify('warning', '本地文件暂不支持在线编辑', '可复制到远程后编辑');
+      return;
+    }
     listRef.current?.blur();
-    previewFile(full, sid);
+    previewFile(full, target as string);
   };
 
   const openDialog = (type: DialogType, file?: RemoteFile) => {
@@ -347,35 +344,163 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
     if (!dialog) return;
     const value = dialog.value.trim();
     if (dialog.type !== 'delete' && (!value || value.includes('/'))) return;
-    const oldPath = dialog.file
-      ? `${remotePath}/${dialog.file.filename}`.replace(/\/+/g, '/')
-      : '';
-    if (dialog.type === 'mkdir') mkdir(value, sid);
-    if (dialog.type === 'create') createFile(value, sid);
+    const oldPath = dialog.file ? joinRemotePath(remotePath, dialog.file.filename) : '';
+    if (dialog.type === 'touch') paneTouch(side, value);
+    if (dialog.type === 'mkdir') paneMkdir(side, value);
     if (dialog.type === 'rename' && dialog.file && value !== dialog.file.filename) {
-      rename(oldPath, `${remotePath}/${value}`.replace(/\/+/g, '/'), sid);
+      paneRename(side, oldPath, joinRemotePath(remotePath, value));
     }
-    if (dialog.type === 'delete' && dialog.file) removePath(oldPath, sid);
+    if (dialog.type === 'delete' && dialog.file) paneRemove(side, oldPath);
     setDialog(null);
   };
 
-  return (
-    <div className="file-panel">
-      <div className="fp-heading">
-        <div>
-          <strong>远程文件</strong>
-          <span>{ready ? `${files.length} 项` : 'SFTP'}</span>
+  const pickTarget = (picked: 'local' | number) => {
+    setPickerPos(null);
+    if (picked === 'local') setPaneTarget(side, 'local');
+    else void openFilesHost(picked, side);
+  };
+
+  const targetLabel = isLocal
+    ? '本机'
+    : sess
+      ? `${sess.username}@${sess.host}`
+      : '选择目标';
+
+  const hosts = useMemo(
+    () => [...savedConnections].sort((a, b) => Number(b.lastUsedAt || 0) - Number(a.lastUsedAt || 0)),
+    [savedConnections],
+  );
+
+  const pickerList = (onPick: (picked: 'local' | number) => void) => (
+    <>
+      <button type="button" className="newtab-item" onClick={() => onPick('local')}>
+        <Monitor size={15} aria-hidden />
+        <span className="newtab-item-name">本机</span>
+        <span className="newtab-item-meta">Noe-SSH 服务所在机器</span>
+      </button>
+      {hosts.map((c) => {
+        const name = String(c.name || `${c.username}@${c.host}`);
+        const meta = `${c.username}@${c.host}:${c.port || 22}`;
+        return (
+          <button
+            key={String(c.id)}
+            type="button"
+            className="newtab-item"
+            onClick={() => onPick(c.id as number)}
+          >
+            <Server size={15} aria-hidden />
+            <span className="newtab-item-name">{name}</span>
+            <span className="newtab-item-meta">{meta}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+
+  // ---- No target yet: inline picker ----
+  if (!target) {
+    return (
+      <div className="file-panel fp-pane">
+        <div className="fp-pane-empty">
+          <span className="files-empty-icon" aria-hidden>
+            <HardDrive size={26} />
+          </span>
+          <strong>选择目标</strong>
+          <span>浏览本机或远程主机的文件</span>
+          <div className="fp-pane-picklist">{pickerList(pickTarget)}</div>
         </div>
+      </div>
+    );
+  }
+
+  // ---- Remote target that is not ready yet ----
+  if (!isLocal && sess && !ready) {
+    const connecting = sess.status === 'connecting' || sess.status === 'disconnecting';
+    return (
+      <div className="file-panel fp-pane">
+        <div className="fp-pane-head">
+          <span className="files-host-badge" title={`${sess.username}@${sess.host}:${sess.port || 22}`}>
+            <HardDrive size={14} aria-hidden />
+            {sess.username}@{sess.host}
+          </span>
+          <span className="spacer" />
+          <button type="button" className="icon-button" title="切换目标" onClick={() => closeFilesTarget(side)}>
+            <X size={15} />
+          </button>
+        </div>
+        <div className="fp-pane-empty">
+          {connecting ? (
+            <>
+              <span className="loader" />
+              <span>正在连接…</span>
+            </>
+          ) : (
+            <>
+              <Folder size={26} />
+              <strong>连接不可用</strong>
+              <span>{sess.error || '文件连接已断开'}</span>
+              {sess.hidden && (
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => { void connectActive(sess.id); }}>
+                  重新连接
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="file-panel fp-pane">
+      <div className="fp-pane-head">
+        <button
+          type="button"
+          className="files-host-badge fp-target-badge"
+          title={isLocal ? '本机（Noe-SSH 服务所在机器）' : `${sess?.username}@${sess?.host}:${sess?.port || 22}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (pickerPos) {
+              setPickerPos(null);
+              return;
+            }
+            const rect = event.currentTarget.getBoundingClientRect();
+            setPickerPos({
+              x: Math.max(6, Math.min(rect.left, window.innerWidth - 280)),
+              y: rect.bottom + 4,
+            });
+          }}
+        >
+          {isLocal ? <Monitor size={14} aria-hidden /> : <HardDrive size={14} aria-hidden />}
+          {targetLabel}
+          <ChevronDown size={13} aria-hidden />
+        </button>
+        {sess?.hidden && <span className="files-host-mode">独立连接</span>}
+        <span className="spacer" />
         <button
           type="button"
           className="icon-button"
-          onClick={() => listFiles(undefined, sid)}
-          disabled={!ready || sess?.listLoading}
+          onClick={() => listPane(side)}
+          disabled={!ready || listLoading}
           title="刷新"
         >
-          <RefreshCw size={15} className={sess?.listLoading ? 'spin' : ''} />
+          <RefreshCw size={15} className={listLoading ? 'spin' : ''} />
         </button>
+        <button type="button" className="icon-button" title="关闭目标" onClick={() => closeFilesTarget(side)}>
+          <X size={15} />
+        </button>
+        {pickerPos && createPortal(
+          <div
+            className="context-menu fp-target-menu"
+            style={{ left: pickerPos.x, top: pickerPos.y }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {pickerList(pickTarget)}
+          </div>,
+          document.body,
+        )}
       </div>
+
       <div className="fp-nav">
         <button
           type="button"
@@ -390,7 +515,7 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
           <button
             type="button"
             className={`crumb ${atRoot ? 'current' : ''}`}
-            onClick={() => listFiles('/', sid)}
+            onClick={() => listPane(side, '/')}
             disabled={!ready}
           >
             /
@@ -422,31 +547,19 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            disabled={!ready || Boolean(sess?.fileOperation)}
-            onClick={() => openDialog('create')}
+            disabled={!ready}
+            onClick={() => openDialog('touch')}
           >
-            <FilePlus2 size={14} /> 文件
+            <FilePlus size={14} /> 文件
           </button>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            disabled={!ready || Boolean(sess?.fileOperation)}
+            disabled={!ready}
             onClick={() => openDialog('mkdir')}
           >
             <FolderPlus size={14} /> 文件夹
           </button>
-          <label className={`btn btn-ghost btn-sm ${!ready ? 'disabled' : ''}`}>
-            <Upload size={14} /> 上传
-            <input
-              type="file"
-              multiple
-              hidden
-              disabled={!ready}
-              onChange={(e) => {
-                if (e.target.files?.length) uploadFiles(e.target.files, sid);
-              }}
-            />
-          </label>
         </div>
         <div className="fp-filters">
           <div className="search-field">
@@ -465,19 +578,35 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
         </div>
       </div>
 
-      {progress && (
+      {transfer && (
         <div className="transfer-bar">
           <div className="transfer-label">
-            {progress.kind === 'up' ? '上传' : '下载'} {Math.min(100, Math.round((progress.written / (progress.total || 1)) * 100))}%
+            接收 {transfer.file ? `${transfer.file.split('/').pop()} ` : ''}
+            {transfer.total > 0
+              ? `${Math.min(100, Math.round((transfer.written / transfer.total) * 100))}%`
+              : formatSize(transfer.written)}
           </div>
           <div className="transfer-track">
             <div
               className="transfer-fill"
-              style={{ width: `${Math.min(100, (progress.written / (progress.total || 1)) * 100)}%` }}
+              style={{
+                width: transfer.total > 0
+                  ? `${Math.min(100, (transfer.written / transfer.total) * 100)}%`
+                  : '100%',
+              }}
             />
           </div>
+          <button
+            type="button"
+            className="icon-button transfer-abort"
+            title="取消传输"
+            onClick={() => abortPaneTransfer(side)}
+          >
+            <X size={13} />
+          </button>
         </div>
       )}
+
       <div
         ref={listRef}
         className="fp-list"
@@ -489,7 +618,6 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
         }}
         onKeyDown={(event) => {
           const active = document.activeElement as HTMLElement | null;
-          // Never steal clipboard shortcuts from the editor or text fields.
           if (
             active?.closest('.cm-editor')
             || active?.closest('.editor-float')
@@ -498,25 +626,8 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
             return;
           }
           if (!listRef.current?.contains(active)) return;
-
-          const mod = event.ctrlKey || event.metaKey;
           const file = files.find((item) => item.filename === selected);
-          if (mod && event.key.toLowerCase() === 'v') {
-            event.preventDefault();
-            if (canPaste) pasteRemote(sid);
-            return;
-          }
           if (!file) return;
-          if (mod && event.key.toLowerCase() === 'c') {
-            event.preventDefault();
-            copyRemote(file, sid);
-            return;
-          }
-          if (mod && event.key.toLowerCase() === 'x') {
-            event.preventDefault();
-            cutRemote(file, sid);
-            return;
-          }
           if (event.key === 'Enter') {
             event.preventDefault();
             openFile(file);
@@ -530,12 +641,6 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
             openDialog('delete', file);
           }
         }}
-        onContextMenu={(event) => {
-          if ((event.target as HTMLElement).closest('.fp-row')) return;
-          event.preventDefault();
-          if (!ready) return;
-          openContextMenu(event.clientX, event.clientY, null);
-        }}
         onDragEnter={(event) => {
           event.preventDefault();
           dragDepth.current += 1;
@@ -546,35 +651,45 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
           dragDepth.current -= 1;
           if (dragDepth.current <= 0) setDragging(false);
         }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
+        onDragOver={(event) => {
+          event.preventDefault();
+          const isPaneRow = event.dataTransfer.types.includes(PANE_DRAG_MIME);
+          event.dataTransfer.dropEffect = isPaneRow || !isLocal ? 'copy' : 'none';
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
           dragDepth.current = 0;
           setDragging(false);
-          if (ready && e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files, sid);
+          if (!ready) return;
+          const payload = event.dataTransfer.getData(PANE_DRAG_MIME);
+          if (payload) {
+            try {
+              const parsed = JSON.parse(payload) as { side: PaneSide; filename: string };
+              if (parsed.side !== side) {
+                const state = useAppStore.getState();
+                const source = paneFiles(state, parsed.side).find((f) => f.filename === parsed.filename);
+                if (source) transferToOtherPane(parsed.side, source);
+              }
+            } catch {
+              /* malformed drag payload */
+            }
+            return;
+          }
+          // OS files can only drop into a remote pane (browser upload path).
+          if (!isLocal && event.dataTransfer.files?.length) {
+            void uploadFiles(event.dataTransfer.files, target as string);
+          }
         }}
       >
         {dragging && (
           <div className="drop-overlay">
             <Upload size={26} />
-            <strong>释放以上传到当前目录</strong>
+            <strong>释放以复制到当前目录</strong>
           </div>
         )}
-        {!connected ? (
-          <div className="empty-state">
-            <Folder size={28} />
-            <strong>尚未连接服务器</strong>
-            <span>建立 SSH 连接后可浏览远程文件</span>
-          </div>
-        ) : sess?.sftpStatus === 'connecting' ? (
-          <div className="empty-state"><span className="loader" />正在建立文件通道…</div>
-        ) : sess?.sftpStatus === 'error' ? (
-          <div className="empty-state error">
-            <Folder size={28} />
-            <strong>文件通道不可用</strong>
-            <span>{sess.error || 'SFTP 初始化失败，请重新连接'}</span>
-          </div>
-        ) : sess?.listLoading && sess.files.length === 0 ? (
+        {!ready ? (
+          <div className="empty-state"><span className="loader" />正在读取目录…</div>
+        ) : listLoading && files.length === 0 ? (
           <div className="empty-state"><span className="loader" />正在读取目录…</div>
         ) : files.length === 0 ? (
           <div className="empty-state">
@@ -625,13 +740,15 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
               <span className="fp-col-spacer" aria-hidden />
               <span className="fp-col-menu-h" aria-hidden />
             </div>
-            {files.map((f) => {
-            const fullPath = joinRemotePath(remotePath, f.filename);
-            const isCut = cutPath === fullPath;
-            return (
+            {files.map((f) => (
               <div
                 key={f.filename}
-                className={`fp-row ${f.isDir ? 'is-dir' : 'is-file'} ${selected === f.filename ? 'selected' : ''} ${isCut ? 'is-cut' : ''}`}
+                className={`fp-row ${f.isDir ? 'is-dir' : 'is-file'} ${selected === f.filename ? 'selected' : ''}`}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(PANE_DRAG_MIME, JSON.stringify({ side, filename: f.filename }));
+                  event.dataTransfer.effectAllowed = 'copy';
+                }}
                 onClick={() => setSelected(f.filename)}
                 onDoubleClick={() => openFile(f)}
                 onContextMenu={(event) => {
@@ -669,15 +786,14 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
                       event.stopPropagation();
                       setSelected(f.filename);
                       const rect = event.currentTarget.getBoundingClientRect();
-                      openContextMenu(rect.right - 180, rect.bottom + 4, f);
+                      openContextMenu(rect.right - 190, rect.bottom + 4, f);
                     }}
                   >
                     <MoreHorizontal size={15} />
                   </button>
                 </div>
               </div>
-            );
-          })}
+            ))}
           </>
         )}
       </div>
@@ -690,23 +806,25 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
         >
           {contextMenu.file && (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  const file = contextMenu.file!;
-                  setContextMenu(null);
-                  openFile(file);
-                }}
-              >
-                {contextMenu.file.isDir ? <Eye size={14} /> : <Pencil size={14} />}
-                {contextMenu.file.isDir ? '打开' : '编辑'}
-              </button>
-              {!contextMenu.file.isDir && (
+              {!isLocal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const file = contextMenu.file!;
+                    setContextMenu(null);
+                    openFile(file);
+                  }}
+                >
+                  {contextMenu.file.isDir ? <Eye size={14} /> : <Pencil size={14} />}
+                  {contextMenu.file.isDir ? '打开' : '编辑'}
+                </button>
+              )}
+              {!isLocal && !contextMenu.file.isDir && (
                 <button
                   type="button"
                   onClick={() => {
                     const full = joinRemotePath(remotePath, contextMenu.file!.filename);
-                    downloadFile(full, sid);
+                    downloadFile(full, target as string);
                     setContextMenu(null);
                   }}
                 >
@@ -715,36 +833,15 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
               )}
               <button
                 type="button"
+                disabled={!otherReady}
+                title={otherReady ? '复制到另一侧当前目录' : '另一侧尚未就绪'}
                 onClick={() => {
-                  copyRemote(contextMenu.file!);
+                  transferToOtherPane(side, contextMenu.file!);
                   setContextMenu(null);
                 }}
               >
-                <Copy size={14} />复制
+                <Copy size={14} />复制到另一侧
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  cutRemote(contextMenu.file!);
-                  setContextMenu(null);
-                }}
-              >
-                <Scissors size={14} />剪切
-              </button>
-            </>
-          )}
-          <button
-            type="button"
-            disabled={!canPaste}
-            onClick={() => {
-              setContextMenu(null);
-              pasteRemote();
-            }}
-          >
-            <ClipboardPaste size={14} />粘贴
-          </button>
-          {contextMenu.file && (
-            <>
               <button
                 type="button"
                 onClick={() => {
@@ -792,7 +889,7 @@ export function FilePanel({ sessionId }: { sessionId?: string }) {
             }}
           >
             <h2>
-              {dialog.type === 'create' && '新建文件'}
+              {dialog.type === 'touch' && '新建文件'}
               {dialog.type === 'mkdir' && '新建文件夹'}
               {dialog.type === 'rename' && '重命名'}
               {dialog.type === 'delete' && '确认删除'}

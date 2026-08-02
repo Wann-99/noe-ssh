@@ -45,17 +45,14 @@ export function ConnectForm() {
   const form = useAppStore((s) => s.form);
   const setForm = useAppStore((s) => s.setForm);
   const connectActive = useAppStore((s) => s.connectActive);
-  const disconnectActive = useAppStore((s) => s.disconnectActive);
   const saveCurrentConnection = useAppStore((s) => s.saveCurrentConnection);
   const applySavedConnection = useAppStore((s) => s.applySavedConnection);
   const saved = useAppStore((s) => s.savedConnections);
+  const editingConnectionId = useAppStore((s) => s.editingConnectionId);
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sess = sessions.find((s) => s.id === activeSessionId);
-  const connected = sess?.status === 'ready';
   const connecting = sess?.status === 'connecting';
-  const disconnecting = sess?.status === 'disconnecting';
-  const locked = connected || connecting || disconnecting;
 
   const [hostOpen, setHostOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -63,10 +60,6 @@ export function ConnectForm() {
   const [saving, setSaving] = useState(false);
   const saveInputRef = useRef<HTMLInputElement>(null);
   const hostWrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (locked) setHostOpen(false);
-  }, [locked]);
 
   useEffect(() => {
     if (!hostOpen) return;
@@ -85,13 +78,23 @@ export function ConnectForm() {
   }, [hostOpen]);
 
   const pickSaved = async (id: number) => {
-    if (locked) return;
     setHostOpen(false);
     await applySavedConnection(id);
   };
 
+  // The drawer form is a scratchpad for a new connection: if the foreground
+  // session is busy, spawn a fresh session tab instead of disturbing it.
+  const connectFromForm = () => {
+    const st = useAppStore.getState();
+    const current = st.sessions.find((s) => s.id === st.activeSessionId);
+    if (current && ['connecting', 'ready', 'disconnecting'].includes(current.status)) {
+      st.createSession();
+    }
+    void st.connectActive();
+  };
+
   return (
-    <div className={`panel connect-form${locked ? ' is-locked' : ''}`}>
+    <div className="panel connect-form">
       <div className="form-row">
         <label className="field grow">
           <span>主机</span>
@@ -102,8 +105,6 @@ export function ConnectForm() {
               onChange={(e) => setForm({ host: e.target.value })}
               placeholder=""
               autoComplete="off"
-              disabled={locked}
-              readOnly={locked}
             />
             <button
               type="button"
@@ -111,12 +112,12 @@ export function ConnectForm() {
               title="选择已保存主机"
               aria-label="选择已保存主机"
               aria-expanded={hostOpen}
-              disabled={locked || saved.length === 0}
+              disabled={saved.length === 0}
               onClick={() => setHostOpen((v) => !v)}
             >
               <ChevronDown size={15} />
             </button>
-            {hostOpen && !locked && (
+            {hostOpen && (
               <div className="host-combo-menu" role="listbox">
                 {saved.length === 0 ? (
                   <div className="host-combo-empty">暂无已保存主机</div>
@@ -147,8 +148,6 @@ export function ConnectForm() {
             type="number"
             value={form.port}
             onChange={(e) => setForm({ port: Number(e.target.value) || 22 })}
-            disabled={locked}
-            readOnly={locked}
           />
         </label>
       </div>
@@ -159,8 +158,6 @@ export function ConnectForm() {
           value={form.username}
           onChange={(e) => setForm({ username: e.target.value })}
           placeholder=""
-          disabled={locked}
-          readOnly={locked}
         />
       </label>
 
@@ -171,7 +168,6 @@ export function ConnectForm() {
             label="密码"
             value={form.password}
             onChange={(password) => setForm({ password })}
-            disabled={locked}
           />
         </label>
       ) : (
@@ -183,8 +179,6 @@ export function ConnectForm() {
               rows={4}
               value={form.privateKey}
               onChange={(e) => setForm({ privateKey: e.target.value })}
-              disabled={locked}
-              readOnly={locked}
             />
           </label>
           <label className="field">
@@ -194,7 +188,6 @@ export function ConnectForm() {
               value={form.passphrase}
               onChange={(passphrase) => setForm({ passphrase })}
               autoComplete="off"
-              disabled={locked}
             />
           </label>
         </>
@@ -205,7 +198,6 @@ export function ConnectForm() {
           type="button"
           className={form.authMode === 'password' ? 'active' : ''}
           onClick={() => setForm({ authMode: 'password' })}
-          disabled={locked}
         >
           密码
         </button>
@@ -213,7 +205,6 @@ export function ConnectForm() {
           type="button"
           className={form.authMode === 'key' ? 'active' : ''}
           onClick={() => setForm({ authMode: 'key' })}
-          disabled={locked}
         >
           密钥
         </button>
@@ -224,7 +215,6 @@ export function ConnectForm() {
           type="checkbox"
           checked={form.x11Forward}
           onChange={(e) => setForm({ x11Forward: e.target.checked })}
-          disabled={locked}
         />
         X11 转发（ssh -X）
       </label>
@@ -235,7 +225,6 @@ export function ConnectForm() {
               type="checkbox"
               checked={form.x11Trusted}
               onChange={(e) => setForm({ x11Trusted: e.target.checked })}
-              disabled={locked}
             />
             信任 X11（ssh -Y）
           </label>
@@ -253,7 +242,6 @@ export function ConnectForm() {
             className="input"
             value={form.proxyType}
             onChange={(e) => setForm({ proxyType: e.target.value })}
-            disabled={locked}
           >
             <option value="">无</option>
             <option value="http">HTTP</option>
@@ -268,8 +256,6 @@ export function ConnectForm() {
                 className="input"
                 value={form.proxyHost}
                 onChange={(e) => setForm({ proxyHost: e.target.value })}
-                disabled={locked}
-                readOnly={locked}
               />
             </label>
             <label className="field sm">
@@ -279,8 +265,6 @@ export function ConnectForm() {
                 type="number"
                 value={form.proxyPort || ''}
                 onChange={(e) => setForm({ proxyPort: Number(e.target.value) || 0 })}
-                disabled={locked}
-                readOnly={locked}
               />
             </label>
           </div>
@@ -290,7 +274,6 @@ export function ConnectForm() {
             type="checkbox"
             checked={form.useJump}
             onChange={(e) => setForm({ useJump: e.target.checked })}
-            disabled={locked}
           />
           使用 ProxyJump（一级跳板）
         </label>
@@ -303,8 +286,6 @@ export function ConnectForm() {
                   className="input"
                   value={form.jumpHost}
                   onChange={(e) => setForm({ jumpHost: e.target.value })}
-                  disabled={locked}
-                  readOnly={locked}
                 />
               </label>
               <label className="field sm">
@@ -314,8 +295,6 @@ export function ConnectForm() {
                   type="number"
                   value={form.jumpPort}
                   onChange={(e) => setForm({ jumpPort: Number(e.target.value) || 22 })}
-                  disabled={locked}
-                  readOnly={locked}
                 />
               </label>
             </div>
@@ -325,8 +304,6 @@ export function ConnectForm() {
                 className="input"
                 value={form.jumpUsername}
                 onChange={(e) => setForm({ jumpUsername: e.target.value })}
-                disabled={locked}
-                readOnly={locked}
               />
             </label>
             <label className="field">
@@ -335,7 +312,6 @@ export function ConnectForm() {
                 label="跳板密码"
                 value={form.jumpPassword}
                 onChange={(jumpPassword) => setForm({ jumpPassword })}
-                disabled={locked}
               />
             </label>
             <label className="field">
@@ -345,8 +321,6 @@ export function ConnectForm() {
                 rows={3}
                 value={form.jumpPrivateKey}
                 onChange={(e) => setForm({ jumpPrivateKey: e.target.value })}
-                disabled={locked}
-                readOnly={locked}
               />
             </label>
             <label className="field">
@@ -356,7 +330,6 @@ export function ConnectForm() {
                 value={form.jumpPassphrase}
                 onChange={(jumpPassphrase) => setForm({ jumpPassphrase })}
                 autoComplete="off"
-                disabled={locked}
               />
             </label>
             <p className="hint">启用 Jump 时，代理仅用于连接跳板主机。</p>
@@ -365,30 +338,22 @@ export function ConnectForm() {
       </details>
 
       <div className="form-actions">
-        {!connected && !disconnecting ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={connecting}
-            onClick={() => connectActive()}
-          >
-            {connecting ? '连接中…' : '连接'}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-danger"
-            disabled={disconnecting}
-            onClick={() => disconnectActive()}
-          >
-            {disconnecting ? '断开中…' : '断开'}
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={connecting}
+          onClick={connectFromForm}
+        >
+          {connecting ? '连接中…' : '连接'}
+        </button>
         <button
           type="button"
           className="btn btn-ghost"
           onClick={() => {
-            setSaveName(`${form.username || 'user'}@${form.host || 'host'}`);
+            const editing = editingConnectionId != null
+              ? saved.find((c) => c.id === editingConnectionId)
+              : undefined;
+            setSaveName(String(editing?.name || `${form.username || 'user'}@${form.host || 'host'}`));
             setSaveOpen(true);
             window.setTimeout(() => {
               saveInputRef.current?.focus();
