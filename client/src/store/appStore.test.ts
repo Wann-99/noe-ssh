@@ -205,6 +205,121 @@ describe('saved connection upsert', () => {
   });
 });
 
+describe('connection display alias', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', storageMock());
+    vi.stubGlobal('window', {
+      setTimeout,
+      dispatchEvent: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('applySavedConnection fills the saved alias into the form', async () => {
+    const { useAppStore } = await import('./appStore');
+    useAppStore.setState({
+      savedConnections: [
+        { id: 5, name: 'prod-box', host: 'h1', port: 22, username: 'u1', password: 'pw', encrypted: false },
+      ],
+    });
+
+    const ok = await useAppStore.getState().applySavedConnection(5);
+
+    expect(ok).toBe(true);
+    expect(useAppStore.getState().form.name).toBe('prod-box');
+  });
+
+  it('auto-saves a successful connect under the typed alias', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    vi.spyOn(sshSocket, 'ensureOpen').mockResolvedValue(undefined);
+    vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.getState().setForm({ name: 'CO99', host: 'h9', port: 22, username: 'u9', password: 'pw' });
+
+    await useAppStore.getState().connectActive();
+    useAppStore.getState().handleWsMessage({ type: 'connected', sessionId, terminalId: 't-1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const list = useAppStore.getState().savedConnections;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ name: 'CO99', host: 'h9', username: 'u9' });
+  });
+
+  it('keeps the existing custom name when reconnecting without an alias', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    vi.spyOn(sshSocket, 'ensureOpen').mockResolvedValue(undefined);
+    vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    useAppStore.setState({
+      savedConnections: [
+        { id: 7, name: 'my-server', host: 'h1', port: 22, username: 'u1', encrypted: false },
+      ],
+    });
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.getState().setForm({ host: 'h1', port: 22, username: 'u1', password: 'pw' });
+
+    await useAppStore.getState().connectActive();
+    useAppStore.getState().handleWsMessage({ type: 'connected', sessionId, terminalId: 't-1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const list = useAppStore.getState().savedConnections;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: 7, name: 'my-server' });
+  });
+
+  it('updates the edited entry in place when its host changes before connecting', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    vi.spyOn(sshSocket, 'ensureOpen').mockResolvedValue(undefined);
+    vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    useAppStore.setState({
+      savedConnections: [
+        { id: 2, name: 'prod', host: 'h1', port: 22, username: 'u1', encrypted: false },
+      ],
+      editingConnectionId: 2,
+    });
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.getState().setForm({ name: 'prod', host: 'h2', port: 2222, username: 'u1', password: 'pw' });
+
+    await useAppStore.getState().connectActive();
+    useAppStore.getState().handleWsMessage({ type: 'connected', sessionId, terminalId: 't-1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const list = useAppStore.getState().savedConnections;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: 2, name: 'prod', host: 'h2', port: 2222 });
+    expect(useAppStore.getState().editingConnectionId).toBeNull();
+  });
+
+  it('resets the custom name when the alias is cleared before connecting', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    vi.spyOn(sshSocket, 'ensureOpen').mockResolvedValue(undefined);
+    vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    useAppStore.setState({
+      savedConnections: [
+        { id: 3, name: 'my-server', host: 'h1', port: 22, username: 'u1', encrypted: false },
+      ],
+      editingConnectionId: 3,
+    });
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.getState().setForm({ name: '', host: 'h1', port: 22, username: 'u1', password: 'pw' });
+
+    await useAppStore.getState().connectActive();
+    useAppStore.getState().handleWsMessage({ type: 'connected', sessionId, terminalId: 't-1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const list = useAppStore.getState().savedConnections;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: 3, name: 'u1@h1' });
+  });
+});
+
 describe('connectSaved session reuse', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', storageMock());

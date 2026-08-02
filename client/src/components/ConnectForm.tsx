@@ -48,17 +48,12 @@ export function ConnectForm() {
   const saveCurrentConnection = useAppStore((s) => s.saveCurrentConnection);
   const applySavedConnection = useAppStore((s) => s.applySavedConnection);
   const saved = useAppStore((s) => s.savedConnections);
-  const editingConnectionId = useAppStore((s) => s.editingConnectionId);
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sess = sessions.find((s) => s.id === activeSessionId);
   const connecting = sess?.status === 'connecting';
 
   const [hostOpen, setHostOpen] = useState(false);
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [saveName, setSaveName] = useState('');
-  const [saving, setSaving] = useState(false);
-  const saveInputRef = useRef<HTMLInputElement>(null);
   const hostWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -93,8 +88,25 @@ export function ConnectForm() {
     void st.connectActive();
   };
 
+  // Save without connecting: the alias doubles as the display name on cards.
+  const saveFromForm = () => {
+    const fallback = `${form.username || 'user'}@${form.host || 'host'}`;
+    void saveCurrentConnection(form.name.trim() || fallback);
+  };
+
   return (
     <div className="panel connect-form">
+      <label className="field">
+        <span>别称（可选）</span>
+        <input
+          className="input"
+          value={form.name}
+          onChange={(e) => setForm({ name: e.target.value })}
+          placeholder="留空则显示 用户名@主机"
+          autoComplete="off"
+          maxLength={40}
+        />
+      </label>
       <div className="form-row">
         <label className="field grow">
           <span>主机</span>
@@ -349,69 +361,13 @@ export function ConnectForm() {
         <button
           type="button"
           className="btn btn-ghost"
-          onClick={() => {
-            const editing = editingConnectionId != null
-              ? saved.find((c) => c.id === editingConnectionId)
-              : undefined;
-            setSaveName(String(editing?.name || `${form.username || 'user'}@${form.host || 'host'}`));
-            setSaveOpen(true);
-            window.setTimeout(() => {
-              saveInputRef.current?.focus();
-              saveInputRef.current?.select();
-            }, 0);
-          }}
+          title="仅保存到主机列表，不发起连接"
+          onClick={saveFromForm}
         >
           保存
         </button>
       </div>
 
-      {saveOpen && (
-        <div className="dialog-backdrop" role="presentation" onClick={() => !saving && setSaveOpen(false)}>
-          <form
-            className="dialog-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="save-conn-title"
-            onClick={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              const name = saveName.trim();
-              if (!name || saving) return;
-              setSaving(true);
-              void saveCurrentConnection(name)
-                .then(() => setSaveOpen(false))
-                .finally(() => setSaving(false));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape' && !saving) {
-                event.preventDefault();
-                setSaveOpen(false);
-              }
-            }}
-          >
-            <h2 id="save-conn-title">保存连接</h2>
-            <p>为这条连接起一个名称，之后可在「已保存」中一键填入。</p>
-            <label className="field">
-              <span>连接名称</span>
-              <input
-                ref={saveInputRef}
-                className="input"
-                value={saveName}
-                disabled={saving}
-                onChange={(event) => setSaveName(event.target.value)}
-              />
-            </label>
-            <div className="dialog-actions">
-              <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setSaveOpen(false)}>
-                取消
-              </button>
-              <button type="submit" className="btn btn-primary" disabled={saving || !saveName.trim()}>
-                {saving ? '保存中…' : '保存'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }

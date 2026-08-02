@@ -144,6 +144,8 @@ export type SessionState = {
 };
 
 export type ConnectForm = {
+  /** Display alias; empty falls back to `username@host` when saving. */
+  name: string;
   host: string;
   port: number;
   username: string;
@@ -304,6 +306,7 @@ const DEFAULT_SNIPPETS = [
 ];
 
 const defaultForm = (): ConnectForm => ({
+  name: '',
   host: '',
   port: 22,
   username: '',
@@ -533,7 +536,7 @@ const connectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Form snapshots taken at CONNECT time, consumed for auto-save on CONNECTED. */
-const pendingAutoSave = new Map<string, ConnectForm>();
+const pendingAutoSave = new Map<string, { form: ConnectForm; editingId: number | null }>();
 let editorZCounter = 20;
 
 function nextEditorZ() {
@@ -856,7 +859,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
 
-    const label = `${form.username}@${form.host}`;
+    const label = form.name.trim() || `${form.username}@${form.host}`;
     set({
       sessions: patchSession(sessions, activeSessionId, {
         label,
@@ -945,7 +948,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     // Snapshot the form so a successful handshake can auto-save this host.
-    pendingAutoSave.set(activeSessionId, { ...form });
+    // editingId lets the auto-save update the entry being edited in place.
+    pendingAutoSave.set(activeSessionId, { form: { ...form }, editingId: get().editingConnectionId });
 
     clearTimer(connectTimers, activeSessionId);
     connectTimers.set(activeSessionId, setTimeout(() => {
@@ -984,8 +988,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const jump = secrets.jumpHost;
     set({
+      // A direct connect applies this entry — drop any stale edit-drawer id.
+      // The edit flow re-sets it via setEditingConnection after apply.
+      editingConnectionId: null,
       form: {
         ...get().form,
+        name: String(c.name || ''),
         host: c.host as string,
         port: (c.port as number) || 22,
         username: c.username as string,
@@ -1478,13 +1486,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const snapshot = pendingAutoSave.get(sessionId);
     if (!snapshot) return;
     pendingAutoSave.delete(sessionId);
-    if (!snapshot.host || !snapshot.username) return;
+    const { form, editingId } = snapshot;
+    // The edit-drawer intent is consumed by this connect — never leave it stale.
+    if (editingId != null) set({ editingConnectionId: null });
+    if (!form.host || !form.username) return;
     const { vaultKey } = get();
     // Never fall back to plaintext when a vault exists but is locked.
     if (hasVault() && !vaultKey) return;
-    const entry = await buildConnectionEntry(snapshot, `${snapshot.username}@${snapshot.host}`, vaultKey);
+    const alias = String(form.name || '').trim();
+    const entry = await buildConnectionEntry(form, alias || `${form.username}@${form.host}`, vaultKey);
     entry.lastUsedAt = Date.now();
-    const list = upsertConnectionList(get().savedConnections, entry, null, true);
+    // Edit-drawer connects update that entry in place; only a brand-new connect
+    // without an alias keeps a previously saved custom name.
+    const list = upsertConnectionList(get().savedConnections, entry, editingId, !alias && editingId == null);
     saveRawConnections(list);
     set({ savedConnections: list });
   },
