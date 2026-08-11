@@ -1221,8 +1221,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: var(--text-secondary);
 }
 .header-user-dropdown {
-  position: fixed;
-  z-index: 260;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
   min-width: 168px;
   padding: 5px;
   border: 1px solid var(--border);

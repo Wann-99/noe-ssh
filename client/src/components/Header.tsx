@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   LogOut,
@@ -48,7 +47,6 @@ export function Header() {
   const setShowAdmin = useAppStore((s) => s.setShowAdmin);
   const [elapsed, setElapsed] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
   const [fullscreen, setFullscreen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const userBtnRef = useRef<HTMLButtonElement>(null);
@@ -80,24 +78,6 @@ export function Header() {
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
-
-  useLayoutEffect(() => {
-    if (!userMenuOpen || !userBtnRef.current) return;
-    const place = () => {
-      const rect = userBtnRef.current!.getBoundingClientRect();
-      setMenuPos({
-        top: rect.bottom + 6,
-        right: Math.max(8, window.innerWidth - rect.right),
-      });
-    };
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
-  }, [userMenuOpen]);
 
   useEffect(() => {
     if (!userMenuOpen) return;
@@ -132,12 +112,13 @@ export function Header() {
 
   const closeMenu = () => setUserMenuOpen(false);
 
-  const menu = userMenuOpen && createPortal(
+  // Anchored inside .header-user-menu (position:relative) so it follows the
+  // button and inherits the header's stacking context — no portal/fixed coords.
+  const menu = userMenuOpen && (
     <div
       ref={userMenuRef}
       className="header-user-dropdown"
       role="menu"
-      style={{ top: menuPos.top, right: menuPos.right }}
     >
       {user && (
         <div className="menu-user-card">
@@ -176,8 +157,7 @@ export function Header() {
           <LogOut size={14} />退出
         </button>
       )}
-    </div>,
-    document.body,
+    </div>
   );
 
   return (
