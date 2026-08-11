@@ -18,6 +18,7 @@ import {
   unlockVault,
   type SecretFields,
 } from '../lib/crypto';
+import { BG_DATA_URL_MAX, loadStoredBgUrl } from '../lib/bgImage';
 import {
   isSameOrDescendant,
   joinRemotePath,
@@ -202,6 +203,8 @@ type AppState = {
   paneTransfers: Partial<Record<PaneSide, PaneTransferState>>;
   activePage: PageId;
   termFontSize: number;
+  bgUrl: string;
+  bgOpacity: number;
   form: ConnectForm;
   snippets: { name: string; cmd: string }[];
   savedConnections: Array<Record<string, unknown>>;
@@ -229,6 +232,9 @@ type AppState = {
   setEditingConnection: (id: number | null) => void;
   setActivePage: (p: PageId) => void;
   setFontSize: (n: number) => void;
+  setBg: (url: string, opacity: number) => void;
+  setBgOpacity: (opacity: number) => void;
+  clearBg: () => void;
   createSession: () => string;
   setActiveSession: (id: string) => void;
   closeSession: (id: string) => void;
@@ -585,6 +591,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   paneTransfers: {},
   activePage: 'hosts',
   termFontSize: parseInt(localStorage.getItem('ssh_font_size') || '14', 10) || 14,
+  bgUrl: loadStoredBgUrl(),
+  bgOpacity: parseInt(localStorage.getItem('ssh_bg_opacity') || '15', 10) || 15,
   form: defaultForm(),
   editingConnectionId: null,
   snippets: (() => {
@@ -604,13 +612,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
 
   init: async () => {
-    // Clean up legacy wallpaper keys (background-image feature removed).
-    try {
-      localStorage.removeItem('ssh_bg_url');
-      localStorage.removeItem('ssh_bg_opacity');
-    } catch {
-      /* ignore */
-    }
     const first = newSession('New Tab');
     set({ sessions: [first], activeSessionId: first.id, vaultUnlocked: !hasVault() });
 
@@ -750,6 +751,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   setFontSize: (n) => {
     localStorage.setItem('ssh_font_size', String(n));
     set({ termFontSize: n });
+  },
+  setBg: (url, opacity) => {
+    if (url && url.length > BG_DATA_URL_MAX) {
+      get().notify('error', '背景图过大', '请换更小的图后再试');
+      return;
+    }
+    const nextOpacity = Math.min(100, Math.max(0, Math.round(opacity)));
+    try {
+      if (url) localStorage.setItem('ssh_bg_url', url);
+      else localStorage.removeItem('ssh_bg_url');
+      localStorage.setItem('ssh_bg_opacity', String(nextOpacity));
+    } catch {
+      get().notify('error', '背景图过大', '请换更小的图后再试');
+      return;
+    }
+    set({ bgUrl: url, bgOpacity: nextOpacity });
+  },
+  setBgOpacity: (opacity) => {
+    // Preview-only; persist happens in setBg / clearBg.
+    set({ bgOpacity: Math.min(100, Math.max(0, Math.round(opacity))) });
+  },
+  clearBg: () => {
+    try {
+      localStorage.removeItem('ssh_bg_url');
+      localStorage.removeItem('ssh_bg_opacity');
+    } catch {
+      /* ignore */
+    }
+    set({ bgUrl: '', bgOpacity: 15 });
   },
   notify: (kind, title, message) => {
     const item: ToastItem = {

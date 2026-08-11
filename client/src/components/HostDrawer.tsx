@@ -15,8 +15,8 @@ export function HostDrawer({ title, onClose }: { title: string; onClose: () => v
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Portal to body so the fixed backdrop always covers the full viewport,
-  // independent of any ancestor layout/transform context.
+  // Portal to body: ancestor backdrop-filter (glass theme on .page) would
+  // otherwise trap the fixed backdrop inside the page area.
   return createPortal(
     <div className="drawer-backdrop" role="presentation" onClick={onClose}>
       <div
