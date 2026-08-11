@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import {
   ChevronRight,
-  Image,
   Keyboard,
   LockKeyhole,
   LogOut,
@@ -52,13 +51,11 @@ function SettingsGroup({ title, children }: { title: string; children: ReactNode
 }
 
 export function SettingsPage({
-  onOpenBg,
   onOpenShortcuts,
   onSetupVault,
   onUnlockVault,
   onOpenUpdate,
 }: {
-  onOpenBg: () => void;
   onOpenShortcuts: () => void;
   onSetupVault: () => void;
   onUnlockVault: () => void;
@@ -74,15 +71,6 @@ export function SettingsPage({
 
   return (
     <div className="page settings-page">
-      <SettingsGroup title="外观">
-        <SettingsItem
-          icon={<Image size={16} />}
-          title="背景"
-          desc="自定义壁纸与界面透明度"
-          onClick={onOpenBg}
-        />
-      </SettingsGroup>
-
       <SettingsGroup title="通用">
         <SettingsItem
           icon={<Keyboard size={16} />}

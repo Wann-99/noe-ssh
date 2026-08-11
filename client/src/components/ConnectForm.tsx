@@ -316,6 +316,7 @@ export function ConnectForm() {
                 className="input"
                 value={form.jumpUsername}
                 onChange={(e) => setForm({ jumpUsername: e.target.value })}
+                placeholder="留空则使用目标用户名"
               />
             </label>
             <label className="field">

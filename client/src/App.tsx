@@ -14,7 +14,6 @@ import { SettingsPage } from './components/pages/SettingsPage';
 import { AccessGate } from './components/AccessGate';
 import { AdminPanel } from './components/AdminPanel';
 import { VaultGate } from './components/VaultGate';
-import { BgModal } from './components/BgModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { UpdateModal } from './components/UpdateModal';
 import { DetachedEditor } from './components/DetachedEditor';
@@ -29,12 +28,9 @@ export default function App() {
   const showAdmin = useAppStore((s) => s.showAdmin);
   const user = useAppStore((s) => s.user);
   const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
-  const bgUrl = useAppStore((s) => s.bgUrl);
-  const bgOpacity = useAppStore((s) => s.bgOpacity);
   const activePage = useAppStore((s) => s.activePage);
   const connectActive = useAppStore((s) => s.connectActive);
   const disconnectActive = useAppStore((s) => s.disconnectActive);
-  const [bgOpen, setBgOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [vaultGate, setVaultGate] = useState<'unlock' | 'setup' | null>(hasVault() ? 'unlock' : null);
@@ -94,7 +90,6 @@ export default function App() {
         disconnectActive();
       }
       if (e.key === 'Escape') {
-        setBgOpen(false);
         setShortcutsOpen(false);
         setUpdateOpen(false);
       }
@@ -145,33 +140,8 @@ export default function App() {
     );
   }
 
-  // bgOpacity = wallpaper visibility through the UI (0–100).
-  // Keep the global veil light so panels don't double-darken the photo;
-  // panel alpha tracks (100 − opacity) so 80% really looks ~80% see-through.
-  const visibility = Math.min(100, Math.max(0, bgOpacity)) / 100;
-  const cover = 1 - visibility;
-  const veil = Number((cover * 0.22).toFixed(3)); // 80%→0.044, 0%→0.22
-  const panelAlpha = Number((0.06 + cover * 0.84).toFixed(3)); // 100%→0.06, 80%→0.228, 0%→0.90
-  const chromeAlpha = Number(Math.min(0.92, panelAlpha + 0.04).toFixed(3));
-  const glassBlur = Math.round(2 + cover * 14); // 100%→2px, 80%→5px, 0%→16px
-
   return (
-    <div
-      className={`app-shell${bgUrl ? ' has-bg' : ''}`}
-      style={
-        bgUrl
-          ? {
-              backgroundImage: `linear-gradient(rgba(8,12,16,${veil}), rgba(8,12,16,${veil})), url(${bgUrl})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundAttachment: 'fixed',
-              ['--bg-panel-alpha' as string]: String(panelAlpha),
-              ['--bg-chrome-alpha' as string]: String(chromeAlpha),
-              ['--glass-blur' as string]: `${glassBlur}px`,
-            }
-          : undefined
-      }
-    >
+    <div className="app-shell">
       <Header />
       <SessionTabs />
       <div className="app-body">
@@ -188,7 +158,6 @@ export default function App() {
           {activePage === 'logs' && <LogsPage />}
           {activePage === 'settings' && (
             <SettingsPage
-              onOpenBg={() => setBgOpen(true)}
               onOpenShortcuts={() => setShortcutsOpen(true)}
               onSetupVault={() => setVaultGate('setup')}
               onUnlockVault={() => setVaultGate('unlock')}
@@ -200,7 +169,6 @@ export default function App() {
           )}
         </main>
       </div>
-      {bgOpen && <BgModal onClose={() => setBgOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
       {!hasVault() && (

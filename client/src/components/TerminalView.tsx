@@ -21,29 +21,28 @@ const FIT_THROTTLE_MS = 80;
 
 /** Glass workbench terminal theme — electric blue accent */
 const FRESH_THEME = {
-  // Keep slight transparency for the glass look, but avoid near-zero alpha
-  // which makes glyph edges muddy under compositing.
-  background: 'rgba(12, 16, 24, 0.55)',
-  foreground: '#e8eef7',
-  cursor: '#60a5fa',
-  cursorAccent: '#0c1018',
-  selectionBackground: 'rgba(59,130,246,0.32)',
-  black: '#0c1014',
-  red: '#f87171',
-  green: '#4ade80',
-  yellow: '#fbbf24',
-  blue: '#60a5fa',
-  magenta: '#c084fc',
-  cyan: '#67e8f9',
-  white: '#e8eef7',
-  brightBlack: '#6b778a',
-  brightRed: '#fca5a5',
-  brightGreen: '#86efac',
-  brightYellow: '#fde68a',
-  brightBlue: '#93c5fd',
-  brightMagenta: '#d8b4fe',
-  brightCyan: '#a5f3fc',
-  brightWhite: '#f8fafc',
+  // DESIGN.md (Linear): solid near-black canvas; desaturated ANSI palette.
+  background: '#010102',
+  foreground: '#d0d6e0',
+  cursor: '#828fff',
+  cursorAccent: '#010102',
+  selectionBackground: 'rgba(94, 106, 210, 0.35)',
+  black: '#0f1011',
+  red: '#f0706a',
+  green: '#57ab5a',
+  yellow: '#e0a63c',
+  blue: '#6e87e8',
+  magenta: '#b083f0',
+  cyan: '#6cb6c9',
+  white: '#d0d6e0',
+  brightBlack: '#62666d',
+  brightRed: '#ff938b',
+  brightGreen: '#7bc97e',
+  brightYellow: '#f0c060',
+  brightBlue: '#97a9f0',
+  brightMagenta: '#cba6f7',
+  brightCyan: '#8fd0e0',
+  brightWhite: '#f7f8f8',
 };
 
 type WriteChunk = string | Uint8Array;

@@ -9,7 +9,11 @@ function buildAuthConfig(cfg) {
     readyTimeout: 20000,
     keepaliveInterval: 20000,
   };
-  if (cfg.password) connectConfig.password = cfg.password;
+  if (cfg.password) {
+    connectConfig.password = cfg.password;
+    // Bastions frequently offer only keyboard-interactive; answer with the password.
+    connectConfig.tryKeyboard = true;
+  }
   if (cfg.privateKey) {
     connectConfig.privateKey = cfg.privateKey;
     if (cfg.passphrase) connectConfig.passphrase = cfg.passphrase;
@@ -35,6 +39,11 @@ function connectSsh(config) {
       resolve(client);
     });
     client.on('error', fail);
+    if (config.password) {
+      client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+        finish(prompts.map(() => config.password));
+      });
+    }
 
     client.connect(config);
   });
@@ -63,11 +72,13 @@ async function openSshConnection(msg) {
   const targetPort = msg.port || 22;
   const jump = msg.jumpHost;
 
-  if (jump && jump.host && jump.username) {
+  // Jump username falls back to the target username (ssh -J semantics) so
+  // enabling a jump host without an explicit jump user still uses the jump.
+  if (jump && jump.host) {
     const jumpConfig = buildAuthConfig({
       host: jump.host,
       port: jump.port || 22,
-      username: jump.username,
+      username: jump.username || msg.username,
       password: jump.password,
       privateKey: jump.privateKey,
       passphrase: jump.passphrase,
