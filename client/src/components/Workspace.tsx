@@ -9,6 +9,13 @@ export function Workspace({ visible = true }: { visible?: boolean }) {
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessionStatus = useAppStore((state) =>
     state.sessions.find((item) => item.id === state.activeSessionId)?.status);
+  const sessHost = useAppStore((state) =>
+    state.sessions.find((item) => item.id === state.activeSessionId)?.host);
+  const sessUsername = useAppStore((state) =>
+    state.sessions.find((item) => item.id === state.activeSessionId)?.username);
+  const sessPort = useAppStore((state) =>
+    state.sessions.find((item) => item.id === state.activeSessionId)?.port);
+  const reconnectSession = useAppStore((state) => state.reconnectSession);
   const termTabsKey = useAppStore((state) => {
     const session = state.sessions.find((item) => item.id === state.activeSessionId);
     if (!session) return '';
@@ -128,6 +135,20 @@ export function Workspace({ visible = true }: { visible?: boolean }) {
 
   return (
     <section className="workbench">
+      {sessionStatus === 'idle' && sessHost && (
+        <div className="workbench-reconnect" role="status">
+          <span>已断开 {sessUsername}@{sessHost}:{sessPort || 22}</span>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              if (activeSessionId) void reconnectSession(activeSessionId);
+            }}
+          >
+            重连
+          </button>
+        </div>
+      )}
       <div className="workbench-tabs" role="tablist" aria-label="工作区">
         {terminals.map((pane) => {
           const active = pane.id === activeTerminalId;

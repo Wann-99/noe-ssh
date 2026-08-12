@@ -64,7 +64,8 @@ export default function App() {
 
     const api = getDesktopApi();
     const offClose = api?.lifecycle?.onWillClose?.(() => {
-      useAppStore.getState().disconnectAll();
+      // Sessions are dropped on tray hide; reopen lands on a fresh New Tab.
+      useAppStore.getState().resetToFreshTab();
     });
 
     return () => {

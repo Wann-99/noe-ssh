@@ -254,6 +254,10 @@ type AppState = {
   abortPaneTransfer: (side: PaneSide) => void;
   disconnectActive: () => void;
   disconnectAll: () => void;
+  /** Drop every session and land on a fresh New Tab (desktop tray hide). */
+  resetToFreshTab: () => void;
+  /** Reconnect a disconnected session, reusing saved credentials when available. */
+  reconnectSession: (id: string) => Promise<void>;
   sendInput: (data: string, sessionId?: string, terminalId?: string) => void;
   sendResize: (cols: number, rows: number, sessionId?: string, terminalId?: string) => void;
   setActiveTerminal: (terminalId: string, sessionId?: string) => void;
@@ -1312,10 +1316,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  resetToFreshTab: () => {
+    get().disconnectAll();
+    const s = newSession('New Tab');
+    set({
+      sessions: [s],
+      activeSessionId: s.id,
+      activePage: 'terminal',
+      editors: [],
+      fileClipboard: null,
+      pendingPaste: null,
+      paneTransfers: {},
+      filesPanes: { left: { target: 'local' }, right: { target: null } },
+    });
+  },
+
+  reconnectSession: async (id) => {
+    const sess = get().sessions.find((item) => item.id === id);
+    if (!sess?.host) return;
+    const port = sess.port || 22;
+    const saved = get().savedConnections.find(
+      (c) => c.host === sess.host && Number(c.port) === port && c.username === sess.username,
+    );
+    if (saved) {
+      await get().applySavedConnection(Number(saved.id));
+    } else {
+      get().setForm({ host: sess.host, port, username: sess.username || '' });
+    }
+    await get().connectActive(id);
+  },
+
   sendInput: (data, sessionId, terminalId) => {
     const id = sessionId || get().activeSessionId;
     if (!id) return;
     const sess = get().sessions.find((item) => item.id === id);
+    // Dead/disconnected sessions must not emit terminal traffic.
+    if (!sess || sess.status !== 'ready') return;
     const tid = resolveTerminalId(sess, terminalId);
     // Binary TERM_IN avoids per-keystroke JSON.stringify on the hot path.
     if (!sshSocket.sendBinary(WS_BIN_KIND.TERM_IN, id, tid, termInEncoder.encode(data))) {
@@ -1327,6 +1363,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const id = sessionId || get().activeSessionId;
     if (!id) return;
     const sess = get().sessions.find((item) => item.id === id);
+    if (!sess || sess.status !== 'ready') return;
     const tid = resolveTerminalId(sess, terminalId);
     sshSocket.send({ type: MSG.RESIZE, sessionId: id, terminalId: tid, cols, rows });
   },

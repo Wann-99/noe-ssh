@@ -598,3 +598,103 @@ describe('connectSaved session reuse', () => {
     send.mockRestore();
   });
 });
+
+describe('tray reset and reconnect', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', storageMock());
+    vi.stubGlobal('window', {
+      setTimeout,
+      dispatchEvent: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('resetToFreshTab drops dead sessions and lands on a fresh New Tab', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.setState({
+      sessions: useAppStore.getState().sessions.map((s) => (
+        s.id === sessionId
+          ? { ...s, status: 'ready' as const, host: 'h1', port: 22, username: 'u1' }
+          : s
+      )),
+      activeSessionId: sessionId,
+      editors: [{
+        id: 'e1', sessionId, path: '/a.txt', content: '', original: '', size: 0,
+        mtime: null, saving: false, writeId: null, savingContent: null,
+        dirty: false, minimized: false, zIndex: 1,
+      }],
+      filesPanes: { left: { target: 'local' as const }, right: { target: sessionId } },
+    });
+
+    useAppStore.getState().resetToFreshTab();
+
+    const st = useAppStore.getState();
+    expect(st.sessions).toHaveLength(1);
+    expect(st.sessions[0].label).toBe('New Tab');
+    expect(st.sessions[0].status).toBe('idle');
+    expect(st.activeSessionId).toBe(st.sessions[0].id);
+    expect(st.activePage).toBe('terminal');
+    expect(st.editors).toHaveLength(0);
+    expect(st.filesPanes.right.target).toBeNull();
+  });
+
+  it('reconnectSession refills the form from the matching saved entry and reconnects', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    vi.spyOn(sshSocket, 'ensureOpen').mockResolvedValue(undefined);
+    const send = vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    useAppStore.setState({
+      savedConnections: [
+        { id: 9, name: 'box', host: 'h1', port: 2222, username: 'u1', password: 'pw', encrypted: false },
+      ],
+    });
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.setState({
+      sessions: useAppStore.getState().sessions.map((s) => (
+        s.id === sessionId
+          ? { ...s, status: 'idle' as const, host: 'h1', port: 2222, username: 'u1' }
+          : s
+      )),
+    });
+
+    await useAppStore.getState().reconnectSession(sessionId);
+
+    expect(useAppStore.getState().form.host).toBe('h1');
+    expect(useAppStore.getState().form.port).toBe(2222);
+    expect(useAppStore.getState().form.password).toBe('pw');
+    const connect = send.mock.calls.find(
+      ([m]) => (m as { type?: string }).type === 'connect',
+    );
+    expect(connect).toBeTruthy();
+    expect((connect![0] as { sessionId: string }).sessionId).toBe(sessionId);
+    send.mockRestore();
+  });
+
+  it('sendInput stays silent for sessions that are not ready', async () => {
+    const { useAppStore } = await import('./appStore');
+    const { sshSocket } = await import('../lib/ws');
+    const send = vi.spyOn(sshSocket, 'send').mockReturnValue(true);
+    const sendBinary = vi.spyOn(sshSocket, 'sendBinary').mockReturnValue(true);
+    const sessionId = useAppStore.getState().createSession();
+    useAppStore.setState({
+      sessions: useAppStore.getState().sessions.map((s) => (
+        s.id === sessionId ? { ...s, host: 'h1' } : s
+      )),
+      activeSessionId: sessionId,
+    });
+
+    useAppStore.getState().sendInput('x', sessionId);
+
+    expect(sendBinary).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    send.mockRestore();
+    sendBinary.mockRestore();
+  });
+});
